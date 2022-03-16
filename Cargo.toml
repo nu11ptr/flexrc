@@ -1,0 +1,3 @@
+[workspace]
+members = ["flexrc"]
+exclude = ["benchmarks"]
