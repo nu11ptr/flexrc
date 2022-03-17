@@ -10,11 +10,16 @@ pub use rc::*;
 
 use alloc::boxed::Box;
 use core::marker::PhantomData;
+use core::mem;
 use core::ops::Deref;
 use core::ptr::NonNull;
 
 pub trait RefCount {
     fn new() -> Self;
+
+    fn is_unique(&self) -> bool;
+
+    fn get_count(&self) -> usize;
 
     fn increment(&self) -> usize;
 
@@ -23,6 +28,8 @@ pub trait RefCount {
     fn fence();
 }
 
+// MUST ensure both `Rc` and `Arc` have identical memory layout
+#[repr(C)]
 struct RcBoxInner<RC, T> {
     rc: RC,
     data: T,
@@ -41,6 +48,8 @@ where
     }
 }
 
+// MUST ensure both `Rc` and `Arc` have identical memory layout
+#[repr(C)]
 pub struct RcBox<RC, T>
 where
     RC: RefCount,
@@ -65,9 +74,65 @@ where
     }
 
     #[inline]
+    pub fn from_ref(data: &T) -> Self
+    where
+        T: Clone,
+    {
+        Self::new(data.clone())
+    }
+
+    #[inline]
+    pub fn ref_count(&self) -> usize {
+        self.as_inner().rc.get_count()
+    }
+
+    #[inline]
+    pub fn is_unique(&self) -> bool {
+        self.as_inner().rc.is_unique()
+    }
+
+    #[inline]
     fn as_inner(&self) -> &RcBoxInner<RC, T> {
         // SAFETY: As long as we have an instance, our pointer is guaranteed valid
         unsafe { self.ptr.as_ref() }
+    }
+
+    /// Try to convert this into a type with a different reference counter (likely `Rc` -> `Arc` or
+    /// `Arc` to `Rc`). If the instance is unique (reference count == 1) it will succeed and the
+    /// other type is returned. If is not unique (reference count > 1), it will fail and return itself
+    /// instead
+    #[inline]
+    fn try_into_other<RC2>(self) -> Result<RcBox<RC2, T>, Self>
+    where
+        RC2: RefCount,
+    {
+        // TODO: Ensure `is_unique` is a strong enough guarantee for Arc -> Rc, if not, it probably
+        // isn't possible to do this
+
+        // Safety: If we are the only unique instance then we are safe to do this
+        if self.is_unique() {
+            // SAFETY: Since FlexRc and FlexArc have the exact same memory layout and their inners
+            // (Cell<usize> and AtomicUsize>) are memory identical we can do this safely
+            Ok(unsafe { mem::transmute(self) })
+        } else {
+            Err(self)
+        }
+    }
+
+    /// Convert this into a type with a different reference counter (likely `Rc` -> `Arc` or
+    /// `Arc` to `Rc`). If the instance is unique (reference count == 1) it will succeed and the
+    /// other type is returned. If is not unique (reference count > 1), a copy will be made and
+    /// returned to ensure the call succeeds
+    #[inline]
+    fn into_other<RC2>(self) -> RcBox<RC2, T>
+    where
+        RC2: RefCount,
+        T: Clone,
+    {
+        match self.try_into_other() {
+            Ok(other) => other,
+            Err(this) => <RcBox<RC2, T>>::from_ref(&*this),
+        }
     }
 }
 
