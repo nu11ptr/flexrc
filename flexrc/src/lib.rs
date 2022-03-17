@@ -8,11 +8,14 @@ mod rc;
 pub use arc::*;
 pub use rc::*;
 
+use alloc::alloc::{alloc, handle_alloc_error};
 use alloc::boxed::Box;
+use alloc::str;
+use core::alloc::Layout;
 use core::marker::PhantomData;
-use core::mem;
 use core::ops::Deref;
 use core::ptr::NonNull;
+use core::{mem, ptr};
 
 pub trait RefCount {
     fn new() -> Self;
@@ -30,15 +33,12 @@ pub trait RefCount {
 
 // MUST ensure both `Rc` and `Arc` have identical memory layout
 #[repr(C)]
-struct RcBoxInner<RC, T> {
+struct RcBoxInner<RC, T: ?Sized> {
     rc: RC,
     data: T,
 }
 
-impl<RC, T> RcBoxInner<RC, T>
-where
-    RC: RefCount,
-{
+impl<RC: RefCount, T> RcBoxInner<RC, T> {
     #[inline]
     pub fn new(data: T) -> Self {
         Self {
@@ -50,26 +50,20 @@ where
 
 // MUST ensure both `Rc` and `Arc` have identical memory layout
 #[repr(C)]
-pub struct RcBox<RC, T>
-where
-    RC: RefCount,
-{
+pub struct RcBox<RC: RefCount, T: ?Sized> {
     ptr: NonNull<RcBoxInner<RC, T>>,
     phantom: PhantomData<RcBoxInner<RC, T>>,
 }
 
-impl<RC, T> RcBox<RC, T>
-where
-    RC: RefCount,
-{
+impl<RC: RefCount, T> RcBox<RC, T> {
     #[inline]
     pub fn new(data: T) -> Self {
         let boxed = Box::new(RcBoxInner::new(data));
 
         Self {
-            // SAFETY: `new` is guaranteed to have a pointer so can't ever be `None`
-            ptr: unsafe { NonNull::new(Box::into_raw(boxed)).unwrap_unchecked() },
-            phantom: PhantomData::default(),
+            // SAFETY: `new_unchecked` is guaranteed to receive a valid pointer
+            ptr: unsafe { NonNull::new_unchecked(Box::into_raw(boxed)) },
+            phantom: PhantomData,
         }
     }
 
@@ -91,12 +85,6 @@ where
         self.as_inner().rc.is_unique()
     }
 
-    #[inline]
-    fn as_inner(&self) -> &RcBoxInner<RC, T> {
-        // SAFETY: As long as we have an instance, our pointer is guaranteed valid
-        unsafe { self.ptr.as_ref() }
-    }
-
     /// Try to convert this into a type with a different reference counter (likely `Rc` -> `Arc` or
     /// `Arc` to `Rc`). If the instance is unique (reference count == 1) it will succeed and the
     /// other type is returned. If is not unique (reference count > 1), it will fail and return itself
@@ -107,12 +95,15 @@ where
         RC2: RefCount,
     {
         // TODO: Ensure `is_unique` is a strong enough guarantee for Arc -> Rc, if not, it probably
-        // isn't possible to do this
+        // isn't possible to do this, but Rc -> Arc is good for sure
 
         // Safety: If we are the only unique instance then we are safe to do this
         if self.is_unique() {
-            // SAFETY: Since FlexRc and FlexArc have the exact same memory layout and their inners
-            // (Cell<usize> and AtomicUsize>) are memory identical we can do this safely
+            // SAFETY:
+            // a) both types are same struct and identical other than usage of different RCs
+            // b) type is `repr(C)` so we know the layout
+            // c) although not required, we will ensure same alignment (TODO)
+            // d) we will validate at compile time `AtomicUsize` and `Cell<usize>` are same size (TODO)
             Ok(unsafe { mem::transmute(self) })
         } else {
             Err(self)
@@ -136,10 +127,83 @@ where
     }
 }
 
-impl<RC, T> Deref for RcBox<RC, T>
-where
-    RC: RefCount,
-{
+impl<RC: RefCount, T: Copy> RcBox<RC, [T]> {
+    // This is not safe IF str deref feature is on because there is no guarantee that `str` bytes
+    // came from well formed UTF
+    #[cfg(not(feature = "str_deref"))]
+    #[inline]
+    pub fn from_slice(data: &[T]) -> Self {
+        Self::from_slice_priv(data)
+    }
+
+    fn from_slice_priv(data: &[T]) -> Self {
+        // Unwrap safety: All good as long as array length doesn't overflow in which case we panic
+        let array_layout = Layout::array::<T>(data.len()).expect("valid array length");
+
+        // Unwrap safety: All good as long as same sort of overflow like above doesn't occur
+        // Use () (size 0) because we will get the whole size from above when extending
+        let layout = Layout::new::<RcBoxInner<RC, ()>>()
+            .extend(array_layout)
+            .expect("valid inner layout")
+            .0
+            .pad_to_align();
+
+        // SAFETY: We carefully crafted our layout to correct specifications above - but we check
+        // for null below just in case we run out of memory
+        let ptr = unsafe { alloc(layout) } as *mut T;
+
+        // Ensure allocator didn't return NULL (docs say some allocators will)
+        let ptr = match ptr::NonNull::new(ptr) {
+            Some(ptr) => ptr.as_ptr(),
+            None => handle_alloc_error(layout),
+        };
+
+        // This just makes a "fat pointer" setting the correct # of `T` entries in the metadata
+        let inner = ptr::slice_from_raw_parts(ptr, data.len()) as *mut RcBoxInner<RC, [T]>;
+
+        // Create our inner
+        // SAFETY: We made sure T is `Copy` and we carefully write out each field
+        unsafe {
+            ptr::write(&mut (*inner).rc, RC::new());
+            ptr::copy_nonoverlapping(
+                data.as_ptr(),
+                &mut (*inner).data as *mut [T] as *mut T,
+                data.len(),
+            );
+        }
+
+        Self::from_inner(inner)
+    }
+}
+
+impl<RC: RefCount> RcBox<RC, [u8]> {
+    // There isn't an agreed upon way at a low level to go from [u8] -> str DST.
+    // While casting may very well work forever, I decided to go the ultra safe
+    // route and store as [U8] and just convert via deref to str
+    #[inline]
+    pub fn from_str_ref(s: impl AsRef<str>) -> RcBox<RC, [u8]> {
+        RcBox::from_slice_priv(s.as_ref().as_bytes())
+    }
+}
+
+impl<RC: RefCount, T: ?Sized> RcBox<RC, T> {
+    #[inline]
+    fn from_inner(inner: *mut RcBoxInner<RC, T>) -> Self {
+        Self {
+            // SAFETY: `inner` is checked before this is called to ensure it is valid
+            ptr: unsafe { NonNull::new_unchecked(inner) },
+            phantom: PhantomData,
+        }
+    }
+
+    #[inline]
+    fn as_inner(&self) -> &RcBoxInner<RC, T> {
+        // SAFETY: As long as we have an instance, our pointer is guaranteed valid
+        unsafe { self.ptr.as_ref() }
+    }
+}
+
+impl<RC: RefCount, T> Deref for RcBox<RC, T> {
     type Target = T;
 
     #[inline]
@@ -148,16 +212,26 @@ where
     }
 }
 
-impl<RC, T> Clone for RcBox<RC, T>
-where
-    RC: RefCount,
-{
+#[cfg(feature = "str_deref")]
+impl<RC: RefCount> Deref for RcBox<RC, [u8]> {
+    type Target = str;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: When the `str_deref` feature is on to enable this method, we disable the `from_slice`
+        // method to ensure the data came from a `str`
+        unsafe { str::from_utf8_unchecked(&self.as_inner().data) }
+    }
+}
+
+impl<RC: RefCount, T> Clone for RcBox<RC, T> {
     #[inline]
     fn clone(&self) -> Self {
         let rc = &self.as_inner().rc;
         let old_rc = rc.increment();
 
         if old_rc >= isize::MAX as usize {
+            // Abort not available without std
             panic!("Ref count limit exceeded!");
         }
 
@@ -168,10 +242,7 @@ where
     }
 }
 
-impl<RC, T> Drop for RcBox<RC, T>
-where
-    RC: RefCount,
-{
+impl<RC: RefCount, T: ?Sized> Drop for RcBox<RC, T> {
     #[inline]
     fn drop(&mut self) {
         let rc = &self.as_inner().rc;
