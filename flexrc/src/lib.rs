@@ -18,18 +18,26 @@ use core::ptr::NonNull;
 use core::{mem, ptr};
 
 pub trait RefCount {
+    /// Initializes a new `RefCount` implementation with a count of 1
     fn new() -> Self;
 
+    /// Tests (atomically if necessary) whether or not this is the only instance (count == 1)
     fn is_unique(&self) -> bool;
 
+    /// Returns the reference count
     fn get_count(&self) -> usize;
 
+    /// Increments the reference count and returns the old count
     fn increment(&self) -> usize;
 
+    /// Decrements the reference count and returns the old count
     fn decrement(&self) -> usize;
 
+    /// Initiate a memory fence before taking further action
     fn fence();
 }
+
+// *** RCBoxInner ***
 
 // MUST ensure both `Rc` and `Arc` have identical memory layout
 #[repr(C)]
@@ -40,13 +48,24 @@ struct RcBoxInner<RC, T: ?Sized> {
 
 impl<RC: RefCount, T> RcBoxInner<RC, T> {
     #[inline]
-    pub fn new(data: T) -> Self {
+    fn new(data: T) -> Self {
         Self {
             rc: RC::new(),
             data,
         }
     }
 }
+
+impl<RC: RefCount, T> RcBoxInner<RC, [mem::MaybeUninit<T>]> {
+    #[inline]
+    unsafe fn assume_init(&mut self) -> &mut RcBoxInner<RC, [T]> {
+        // SAFETY: We hold an exclusive borrow and we just cast away `MaybeUninit<T>` which is
+        // guaranteed to be layout/alignment identical to `T`
+        &mut *(self as *mut Self as *mut RcBoxInner<RC, [T]>)
+    }
+}
+
+// *** RCBox ***
 
 // MUST ensure both `Rc` and `Arc` have identical memory layout
 #[repr(C)]
@@ -60,11 +79,8 @@ impl<RC: RefCount, T> RcBox<RC, T> {
     pub fn new(data: T) -> Self {
         let boxed = Box::new(RcBoxInner::new(data));
 
-        Self {
-            // SAFETY: `new_unchecked` is guaranteed to receive a valid pointer
-            ptr: unsafe { NonNull::new_unchecked(Box::into_raw(boxed)) },
-            phantom: PhantomData,
-        }
+        // SAFETY: `new_unchecked` is guaranteed to receive a valid pointer
+        Self::from_inner(unsafe { NonNull::new_unchecked(Box::into_raw(boxed)) })
     }
 
     #[inline]
@@ -76,13 +92,25 @@ impl<RC: RefCount, T> RcBox<RC, T> {
     }
 
     #[inline]
-    pub fn ref_count(&self) -> usize {
-        self.as_inner().rc.get_count()
+    fn is_unique(&self) -> bool {
+        self.as_inner().rc.is_unique()
     }
 
     #[inline]
-    pub fn is_unique(&self) -> bool {
-        self.as_inner().rc.is_unique()
+    pub fn get_mut(&mut self) -> Option<&mut T> {
+        if self.is_unique() {
+            // SAFETY: Since this is the unique owner, we can be assured we are only giving out one `&mut`
+            unsafe { Some(self.get_mut_unchecked()) }
+        } else {
+            None
+        }
+    }
+
+    /// # Safety
+    /// The user is trusted they are to be the sole owner before calling this (typically at init time)
+    #[inline]
+    pub unsafe fn get_mut_unchecked(&mut self) -> &mut T {
+        &mut (*self.ptr.as_ptr()).data
     }
 
     /// Try to convert this into a type with a different reference counter (likely `Rc` -> `Arc` or
@@ -100,10 +128,12 @@ impl<RC: RefCount, T> RcBox<RC, T> {
         // Safety: If we are the only unique instance then we are safe to do this
         if self.is_unique() {
             // SAFETY:
-            // a) both types are same struct and identical other than usage of different RCs
+            // a) both types are the same struct and identical other than usage of different RC types
             // b) type is `repr(C)` so we know the layout
             // c) although not required, we will ensure same alignment (TODO)
             // d) we will validate at compile time `AtomicUsize` and `Cell<usize>` are same size (TODO)
+            // e) only the two pre-defined RCs (`AtomicUsize` and `Cell<usize>` are allowed)
+            // f) this will not be made `pub` with arbitrary RC
             Ok(unsafe { mem::transmute(self) })
         } else {
             Err(self)
@@ -128,17 +158,10 @@ impl<RC: RefCount, T> RcBox<RC, T> {
 }
 
 impl<RC: RefCount, T: Copy> RcBox<RC, [T]> {
-    // This is not safe IF str deref feature is on because there is no guarantee that `str` bytes
-    // came from well formed UTF
-    #[cfg(not(feature = "str_deref"))]
     #[inline]
-    pub fn from_slice(data: &[T]) -> Self {
-        Self::from_slice_priv(data)
-    }
-
-    fn from_slice_priv(data: &[T]) -> Self {
+    fn new_slice_uninit_inner_ptr<'a>(len: usize) -> &'a mut RcBoxInner<RC, [mem::MaybeUninit<T>]> {
         // Unwrap safety: All good as long as array length doesn't overflow in which case we panic
-        let array_layout = Layout::array::<T>(data.len()).expect("valid array length");
+        let array_layout = Layout::array::<mem::MaybeUninit<T>>(len).expect("valid array length");
 
         // Unwrap safety: All good as long as same sort of overflow like above doesn't occur
         // Use () (size 0) because we will get the whole size from above when extending
@@ -150,7 +173,7 @@ impl<RC: RefCount, T: Copy> RcBox<RC, [T]> {
 
         // SAFETY: We carefully crafted our layout to correct specifications above - but we check
         // for null below just in case we run out of memory
-        let ptr = unsafe { alloc(layout) } as *mut T;
+        let ptr = unsafe { alloc(layout) } as *mut mem::MaybeUninit<T>;
 
         // Ensure allocator didn't return NULL (docs say some allocators will)
         let ptr = match ptr::NonNull::new(ptr) {
@@ -159,20 +182,63 @@ impl<RC: RefCount, T: Copy> RcBox<RC, [T]> {
         };
 
         // This just makes a "fat pointer" setting the correct # of `T` entries in the metadata
-        let inner = ptr::slice_from_raw_parts(ptr, data.len()) as *mut RcBoxInner<RC, [T]>;
+        let inner =
+            ptr::slice_from_raw_parts(ptr, len) as *mut RcBoxInner<RC, [mem::MaybeUninit<T>]>;
 
         // Create our inner
         // SAFETY: We made sure T is `Copy` and we carefully write out each field
         unsafe {
             ptr::write(&mut (*inner).rc, RC::new());
+            &mut (*inner)
+        }
+    }
+
+    #[inline]
+    pub fn new_slice_uninit(len: usize) -> RcBox<RC, [mem::MaybeUninit<T>]> {
+        let inner = Self::new_slice_uninit_inner_ptr(len);
+        RcBox::from_inner(inner.into())
+    }
+
+    // This is not safe IF str deref feature is on because there is no guarantee that `str` bytes
+    // came from well formed UTF
+    #[cfg(not(feature = "str_deref"))]
+    #[inline]
+    pub fn from_slice(data: &[T]) -> Self {
+        Self::from_slice_priv(data)
+    }
+
+    #[inline]
+    fn from_slice_priv(data: &[T]) -> Self {
+        let inner = Self::new_slice_uninit_inner_ptr(data.len());
+
+        // SAFETY: We made sure T is `Copy` and we only copy the correct length
+        unsafe {
             ptr::copy_nonoverlapping(
                 data.as_ptr(),
-                &mut (*inner).data as *mut [T] as *mut T,
+                &mut (*inner).data as *mut [mem::MaybeUninit<T>] as *mut [T] as *mut T,
                 data.len(),
             );
         }
 
-        Self::from_inner(inner)
+        // Now that we are initialized, dump the MaybeUninit wrapper
+        unsafe { Self::from_inner(inner.assume_init().into()) }
+    }
+}
+
+impl<RC: RefCount, T> RcBox<RC, [mem::MaybeUninit<T>]> {
+    /// # Safety
+    /// We have unique ownership. We are trusting the user that this memory has been initialized
+    /// (thus why it is an unsafe function)
+    #[inline]
+    pub unsafe fn assume_init(self) -> RcBox<RC, [T]> {
+        RcBox::from_inner(
+            // Avoid drop to ensure no ref count decrement
+            mem::ManuallyDrop::new(self)
+                .ptr
+                .as_mut()
+                .assume_init()
+                .into(),
+        )
     }
 }
 
@@ -188,10 +254,9 @@ impl<RC: RefCount> RcBox<RC, [u8]> {
 
 impl<RC: RefCount, T: ?Sized> RcBox<RC, T> {
     #[inline]
-    fn from_inner(inner: *mut RcBoxInner<RC, T>) -> Self {
+    fn from_inner(inner: NonNull<RcBoxInner<RC, T>>) -> Self {
         Self {
-            // SAFETY: `inner` is checked before this is called to ensure it is valid
-            ptr: unsafe { NonNull::new_unchecked(inner) },
+            ptr: inner,
             phantom: PhantomData,
         }
     }
