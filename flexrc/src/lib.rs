@@ -253,7 +253,7 @@ impl<RC: RefCount> RcBox<RC, [u8]> {
 }
 
 impl<RC: RefCount, T: ?Sized> RcBox<RC, T> {
-    #[inline]
+    #[inline(always)]
     fn from_inner(inner: NonNull<RcBoxInner<RC, T>>) -> Self {
         Self {
             ptr: inner,
@@ -261,7 +261,7 @@ impl<RC: RefCount, T: ?Sized> RcBox<RC, T> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn as_inner(&self) -> &RcBoxInner<RC, T> {
         // SAFETY: As long as we have an instance, our pointer is guaranteed valid
         unsafe { self.ptr.as_ref() }
@@ -271,7 +271,7 @@ impl<RC: RefCount, T: ?Sized> RcBox<RC, T> {
 impl<RC: RefCount, T> Deref for RcBox<RC, T> {
     type Target = T;
 
-    #[inline]
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.as_inner().data
     }
@@ -281,7 +281,7 @@ impl<RC: RefCount, T> Deref for RcBox<RC, T> {
 impl<RC: RefCount> Deref for RcBox<RC, [u8]> {
     type Target = str;
 
-    #[inline]
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         // SAFETY: When the `str_deref` feature is on to enable this method, we disable the `from_slice`
         // method to ensure the data came from a `str`
@@ -289,26 +289,16 @@ impl<RC: RefCount> Deref for RcBox<RC, [u8]> {
     }
 }
 
-impl<RC: RefCount, T> Clone for RcBox<RC, T> {
-    #[inline]
+impl<RC: RefCount, T: ?Sized> Clone for RcBox<RC, T> {
+    #[inline(always)]
     fn clone(&self) -> Self {
-        let rc = &self.as_inner().rc;
-        let old_rc = rc.increment();
-
-        if old_rc >= isize::MAX as usize {
-            // Abort not available without std
-            panic!("Ref count limit exceeded!");
-        }
-
-        Self {
-            ptr: self.ptr,
-            phantom: PhantomData,
-        }
+        self.as_inner().rc.increment();
+        Self::from_inner(self.ptr)
     }
 }
 
 impl<RC: RefCount, T: ?Sized> Drop for RcBox<RC, T> {
-    #[inline]
+    #[inline(always)]
     fn drop(&mut self) {
         let rc = &self.as_inner().rc;
 

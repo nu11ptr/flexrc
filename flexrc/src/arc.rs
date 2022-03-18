@@ -22,17 +22,17 @@ impl RefCount for AtomicUsize {
         self.load(Ordering::SeqCst)
     }
 
-    #[inline]
+    #[inline(always)]
     fn increment(&self) -> usize {
         self.fetch_add(1, Ordering::Relaxed)
     }
 
-    #[inline]
+    #[inline(always)]
     fn decrement(&self) -> usize {
         self.fetch_sub(1, Ordering::Release)
     }
 
-    #[inline]
+    #[inline(always)]
     fn fence() {
         atomic::fence(Ordering::Acquire);
     }

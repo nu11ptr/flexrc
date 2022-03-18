@@ -18,21 +18,21 @@ impl RefCount for Cell<usize> {
         self.get()
     }
 
-    #[inline]
+    #[inline(always)]
     fn increment(&self) -> usize {
         let old = self.get();
         self.set(old + 1);
         old
     }
 
-    #[inline]
+    #[inline(always)]
     fn decrement(&self) -> usize {
         let old = self.get();
         self.set(old - 1);
         old
     }
 
-    #[inline]
+    #[inline(always)]
     fn fence() {}
 }
 
