@@ -1,7 +1,7 @@
 use core::sync::atomic;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::{FlexRc, RcBox, RefCount};
+use crate::{FastRc, FlexRc, RefCount};
 
 const MAX_REFCOUNT: usize = isize::MAX as usize;
 
@@ -45,21 +45,21 @@ impl RefCount for AtomicUsize {
     }
 }
 
-pub type FlexArc<T> = RcBox<AtomicUsize, T>;
+pub type AtomicRc<T> = FlexRc<AtomicUsize, T>;
 
 // SAFETY: We ensure what we are holding is Sync/Send and we have been careful to ensure invariants
 // that allow these markets to be safe
-unsafe impl<T: Sync + Send> Send for FlexArc<T> {}
-unsafe impl<T: Sync + Send> Sync for FlexArc<T> {}
+unsafe impl<T: Sync + Send> Send for AtomicRc<T> {}
+unsafe impl<T: Sync + Send> Sync for AtomicRc<T> {}
 
-impl<T> FlexArc<T> {
+impl<T> AtomicRc<T> {
     #[inline]
-    pub fn try_into_rc(self) -> Result<FlexRc<T>, Self> {
+    pub fn try_into_rc(self) -> Result<FastRc<T>, Self> {
         self.try_into_other()
     }
 
     #[inline]
-    pub fn into_rc(self) -> FlexRc<T>
+    pub fn into_rc(self) -> FastRc<T>
     where
         T: Clone,
     {

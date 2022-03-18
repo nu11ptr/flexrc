@@ -41,12 +41,12 @@ pub trait RefCount {
 
 // MUST ensure both `Rc` and `Arc` have identical memory layout
 #[repr(C)]
-struct RcBoxInner<RC, T: ?Sized> {
+struct FlexRcInner<RC, T: ?Sized> {
     rc: RC,
     data: T,
 }
 
-impl<RC: RefCount, T> RcBoxInner<RC, T> {
+impl<RC: RefCount, T> FlexRcInner<RC, T> {
     #[inline]
     fn new(data: T) -> Self {
         Self {
@@ -56,12 +56,12 @@ impl<RC: RefCount, T> RcBoxInner<RC, T> {
     }
 }
 
-impl<RC: RefCount, T> RcBoxInner<RC, [mem::MaybeUninit<T>]> {
+impl<RC: RefCount, T> FlexRcInner<RC, [mem::MaybeUninit<T>]> {
     #[inline]
-    unsafe fn assume_init(&mut self) -> &mut RcBoxInner<RC, [T]> {
+    unsafe fn assume_init(&mut self) -> &mut FlexRcInner<RC, [T]> {
         // SAFETY: We hold an exclusive borrow and we just cast away `MaybeUninit<T>` which is
         // guaranteed to be layout/alignment identical to `T`
-        &mut *(self as *mut Self as *mut RcBoxInner<RC, [T]>)
+        &mut *(self as *mut Self as *mut FlexRcInner<RC, [T]>)
     }
 }
 
@@ -69,15 +69,15 @@ impl<RC: RefCount, T> RcBoxInner<RC, [mem::MaybeUninit<T>]> {
 
 // MUST ensure both `Rc` and `Arc` have identical memory layout
 #[repr(C)]
-pub struct RcBox<RC: RefCount, T: ?Sized> {
-    ptr: NonNull<RcBoxInner<RC, T>>,
-    phantom: PhantomData<RcBoxInner<RC, T>>,
+pub struct FlexRc<RC: RefCount, T: ?Sized> {
+    ptr: NonNull<FlexRcInner<RC, T>>,
+    phantom: PhantomData<FlexRcInner<RC, T>>,
 }
 
-impl<RC: RefCount, T> RcBox<RC, T> {
+impl<RC: RefCount, T> FlexRc<RC, T> {
     #[inline]
     pub fn new(data: T) -> Self {
-        let boxed = Box::new(RcBoxInner::new(data));
+        let boxed = Box::new(FlexRcInner::new(data));
 
         // SAFETY: `new_unchecked` is guaranteed to receive a valid pointer
         Self::from_inner(unsafe { NonNull::new_unchecked(Box::into_raw(boxed)) })
@@ -118,7 +118,7 @@ impl<RC: RefCount, T> RcBox<RC, T> {
     /// other type is returned. If is not unique (reference count > 1), it will fail and return itself
     /// instead
     #[inline]
-    fn try_into_other<RC2>(self) -> Result<RcBox<RC2, T>, Self>
+    fn try_into_other<RC2>(self) -> Result<FlexRc<RC2, T>, Self>
     where
         RC2: RefCount,
     {
@@ -145,27 +145,27 @@ impl<RC: RefCount, T> RcBox<RC, T> {
     /// other type is returned. If is not unique (reference count > 1), a copy will be made and
     /// returned to ensure the call succeeds
     #[inline]
-    fn into_other<RC2>(self) -> RcBox<RC2, T>
+    fn into_other<RC2>(self) -> FlexRc<RC2, T>
     where
         RC2: RefCount,
         T: Clone,
     {
         match self.try_into_other() {
             Ok(other) => other,
-            Err(this) => <RcBox<RC2, T>>::from_ref(&*this),
+            Err(this) => <FlexRc<RC2, T>>::from_ref(&*this),
         }
     }
 }
 
-impl<RC: RefCount, T: Copy> RcBox<RC, [T]> {
+impl<RC: RefCount, T: Copy> FlexRc<RC, [T]> {
     #[inline]
-    fn new_slice_uninit_inner<'a>(len: usize) -> &'a mut RcBoxInner<RC, [mem::MaybeUninit<T>]> {
+    fn new_slice_uninit_inner<'a>(len: usize) -> &'a mut FlexRcInner<RC, [mem::MaybeUninit<T>]> {
         // Unwrap safety: All good as long as array length doesn't overflow in which case we panic
         let array_layout = Layout::array::<mem::MaybeUninit<T>>(len).expect("valid array length");
 
         // Unwrap safety: All good as long as same sort of overflow like above doesn't occur
         // Use () (size 0) because we will get the whole size from above when extending
-        let layout = Layout::new::<RcBoxInner<RC, ()>>()
+        let layout = Layout::new::<FlexRcInner<RC, ()>>()
             .extend(array_layout)
             .expect("valid inner layout")
             .0
@@ -183,7 +183,7 @@ impl<RC: RefCount, T: Copy> RcBox<RC, [T]> {
 
         // This just makes a "fat pointer" setting the correct # of `T` entries in the metadata
         let inner =
-            ptr::slice_from_raw_parts(ptr, len) as *mut RcBoxInner<RC, [mem::MaybeUninit<T>]>;
+            ptr::slice_from_raw_parts(ptr, len) as *mut FlexRcInner<RC, [mem::MaybeUninit<T>]>;
 
         // Create our inner
         // SAFETY: We made sure T is `Copy` and we carefully write out each field
@@ -194,9 +194,9 @@ impl<RC: RefCount, T: Copy> RcBox<RC, [T]> {
     }
 
     #[inline]
-    pub fn new_slice_uninit(len: usize) -> RcBox<RC, [mem::MaybeUninit<T>]> {
+    pub fn new_slice_uninit(len: usize) -> FlexRc<RC, [mem::MaybeUninit<T>]> {
         let inner = Self::new_slice_uninit_inner(len);
-        RcBox::from_inner(inner.into())
+        FlexRc::from_inner(inner.into())
     }
 
     // This is not safe IF str deref feature is on because there is no guarantee that `str` bytes
@@ -225,13 +225,13 @@ impl<RC: RefCount, T: Copy> RcBox<RC, [T]> {
     }
 }
 
-impl<RC: RefCount, T> RcBox<RC, [mem::MaybeUninit<T>]> {
+impl<RC: RefCount, T> FlexRc<RC, [mem::MaybeUninit<T>]> {
     /// # Safety
     /// We have unique ownership. We are trusting the user that this memory has been initialized
     /// (thus why it is an unsafe function)
     #[inline]
-    pub unsafe fn assume_init(self) -> RcBox<RC, [T]> {
-        RcBox::from_inner(
+    pub unsafe fn assume_init(self) -> FlexRc<RC, [T]> {
+        FlexRc::from_inner(
             // Avoid drop to ensure no ref count decrement
             mem::ManuallyDrop::new(self)
                 .ptr
@@ -242,19 +242,19 @@ impl<RC: RefCount, T> RcBox<RC, [mem::MaybeUninit<T>]> {
     }
 }
 
-impl<RC: RefCount> RcBox<RC, [u8]> {
+impl<RC: RefCount> FlexRc<RC, [u8]> {
     // There isn't an agreed upon way at a low level to go from [u8] -> str DST.
     // While casting may very well work forever, I decided to go the ultra safe
     // route and store as [U8] and just convert via deref to str
     #[inline]
-    pub fn from_str_ref(s: impl AsRef<str>) -> RcBox<RC, [u8]> {
-        RcBox::from_slice_priv(s.as_ref().as_bytes())
+    pub fn from_str_ref(s: impl AsRef<str>) -> FlexRc<RC, [u8]> {
+        FlexRc::from_slice_priv(s.as_ref().as_bytes())
     }
 }
 
-impl<RC: RefCount, T: ?Sized> RcBox<RC, T> {
+impl<RC: RefCount, T: ?Sized> FlexRc<RC, T> {
     #[inline(always)]
-    fn from_inner(inner: NonNull<RcBoxInner<RC, T>>) -> Self {
+    fn from_inner(inner: NonNull<FlexRcInner<RC, T>>) -> Self {
         Self {
             ptr: inner,
             phantom: PhantomData,
@@ -262,13 +262,13 @@ impl<RC: RefCount, T: ?Sized> RcBox<RC, T> {
     }
 
     #[inline(always)]
-    fn as_inner(&self) -> &RcBoxInner<RC, T> {
+    fn as_inner(&self) -> &FlexRcInner<RC, T> {
         // SAFETY: As long as we have an instance, our pointer is guaranteed valid
         unsafe { self.ptr.as_ref() }
     }
 }
 
-impl<RC: RefCount, T> Deref for RcBox<RC, T> {
+impl<RC: RefCount, T> Deref for FlexRc<RC, T> {
     type Target = T;
 
     #[inline(always)]
@@ -278,7 +278,7 @@ impl<RC: RefCount, T> Deref for RcBox<RC, T> {
 }
 
 #[cfg(feature = "str_deref")]
-impl<RC: RefCount> Deref for RcBox<RC, [u8]> {
+impl<RC: RefCount> Deref for FlexRc<RC, [u8]> {
     type Target = str;
 
     #[inline(always)]
@@ -289,7 +289,7 @@ impl<RC: RefCount> Deref for RcBox<RC, [u8]> {
     }
 }
 
-impl<RC: RefCount, T: ?Sized> Clone for RcBox<RC, T> {
+impl<RC: RefCount, T: ?Sized> Clone for FlexRc<RC, T> {
     #[inline(always)]
     fn clone(&self) -> Self {
         self.as_inner().rc.increment();
@@ -297,7 +297,7 @@ impl<RC: RefCount, T: ?Sized> Clone for RcBox<RC, T> {
     }
 }
 
-impl<RC: RefCount, T: ?Sized> Drop for RcBox<RC, T> {
+impl<RC: RefCount, T: ?Sized> Drop for FlexRc<RC, T> {
     #[inline(always)]
     fn drop(&mut self) {
         let rc = &self.as_inner().rc;

@@ -1,6 +1,6 @@
 use core::cell::Cell;
 
-use crate::{FlexArc, RcBox, RefCount};
+use crate::{AtomicRc, FlexRc, RefCount};
 
 impl RefCount for Cell<usize> {
     #[inline]
@@ -39,16 +39,16 @@ impl RefCount for Cell<usize> {
     fn fence() {}
 }
 
-pub type FlexRc<T> = RcBox<Cell<usize>, T>;
+pub type FastRc<T> = FlexRc<Cell<usize>, T>;
 
-impl<T> FlexRc<T> {
+impl<T> FastRc<T> {
     #[inline]
-    pub fn try_into_arc(self) -> Result<FlexArc<T>, Self> {
+    pub fn try_into_arc(self) -> Result<AtomicRc<T>, Self> {
         self.try_into_other()
     }
 
     #[inline]
-    pub fn into_arc(self) -> FlexArc<T>
+    pub fn into_arc(self) -> AtomicRc<T>
     where
         T: Clone,
     {
