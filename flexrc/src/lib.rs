@@ -27,11 +27,11 @@ pub trait RefCount {
     /// Returns the reference count
     fn get_count(&self) -> usize;
 
-    /// Increments the reference count and returns the old count
-    fn increment(&self) -> usize;
+    /// Increments the reference count
+    fn increment(&self);
 
-    /// Decrements the reference count and returns the old count
-    fn decrement(&self) -> usize;
+    /// Decrements the reference count and returns true ref count is now 0
+    fn decrement(&self) -> bool;
 
     /// Initiate a memory fence before taking further action
     fn fence();
@@ -159,7 +159,7 @@ impl<RC: RefCount, T> RcBox<RC, T> {
 
 impl<RC: RefCount, T: Copy> RcBox<RC, [T]> {
     #[inline]
-    fn new_slice_uninit_inner_ptr<'a>(len: usize) -> &'a mut RcBoxInner<RC, [mem::MaybeUninit<T>]> {
+    fn new_slice_uninit_inner<'a>(len: usize) -> &'a mut RcBoxInner<RC, [mem::MaybeUninit<T>]> {
         // Unwrap safety: All good as long as array length doesn't overflow in which case we panic
         let array_layout = Layout::array::<mem::MaybeUninit<T>>(len).expect("valid array length");
 
@@ -195,7 +195,7 @@ impl<RC: RefCount, T: Copy> RcBox<RC, [T]> {
 
     #[inline]
     pub fn new_slice_uninit(len: usize) -> RcBox<RC, [mem::MaybeUninit<T>]> {
-        let inner = Self::new_slice_uninit_inner_ptr(len);
+        let inner = Self::new_slice_uninit_inner(len);
         RcBox::from_inner(inner.into())
     }
 
@@ -209,7 +209,7 @@ impl<RC: RefCount, T: Copy> RcBox<RC, [T]> {
 
     #[inline]
     fn from_slice_priv(data: &[T]) -> Self {
-        let inner = Self::new_slice_uninit_inner_ptr(data.len());
+        let inner = Self::new_slice_uninit_inner(data.len());
 
         // SAFETY: We made sure T is `Copy` and we only copy the correct length
         unsafe {
@@ -302,9 +302,10 @@ impl<RC: RefCount, T: ?Sized> Drop for RcBox<RC, T> {
     fn drop(&mut self) {
         let rc = &self.as_inner().rc;
 
-        // If old val is 1, then it is really 0 now
-        if rc.decrement() == 1 {
+        // If true, then ref count is zero
+        if rc.decrement() {
             RC::fence();
+
             // SAFETY: We own this memory, so guaranteed to exist while we have instance
             unsafe {
                 // Once back into a box, it will drop and deallocate normally

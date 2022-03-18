@@ -19,20 +19,23 @@ impl RefCount for Cell<usize> {
     }
 
     #[inline(always)]
-    fn increment(&self) -> usize {
+    fn increment(&self) {
         let old = self.get();
+        // TODO: This check adds 15-16% clone overhead - truly needed?
+        if old == usize::MAX {
+            // Abort not available on no_std
+            panic!("Reference count overflow");
+        }
         self.set(old + 1);
-        old
     }
 
     #[inline(always)]
-    fn decrement(&self) -> usize {
-        let old = self.get();
-        self.set(old - 1);
-        old
+    fn decrement(&self) -> bool {
+        self.set(self.get() - 1);
+        self.get() == 0
     }
 
-    #[inline(always)]
+    #[inline]
     fn fence() {}
 }
 

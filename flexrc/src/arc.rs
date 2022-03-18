@@ -3,6 +3,8 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{FlexRc, RcBox, RefCount};
 
+const MAX_REFCOUNT: usize = isize::MAX as usize;
+
 impl RefCount for AtomicUsize {
     #[inline]
     fn new() -> Self {
@@ -23,16 +25,21 @@ impl RefCount for AtomicUsize {
     }
 
     #[inline(always)]
-    fn increment(&self) -> usize {
-        self.fetch_add(1, Ordering::Relaxed)
+    fn increment(&self) {
+        let old = self.fetch_add(1, Ordering::Relaxed);
+
+        if old > MAX_REFCOUNT {
+            // Abort not available on no_std
+            panic!("Reference count overflow");
+        }
     }
 
     #[inline(always)]
-    fn decrement(&self) -> usize {
-        self.fetch_sub(1, Ordering::Release)
+    fn decrement(&self) -> bool {
+        self.fetch_sub(1, Ordering::Release) == 1
     }
 
-    #[inline(always)]
+    #[inline]
     fn fence() {
         atomic::fence(Ordering::Acquire);
     }
