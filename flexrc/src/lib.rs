@@ -272,6 +272,37 @@ where
             Err(this) => <FlexRc<META2, META, T>>::from_ref(&*this),
         }
     }
+
+    /// Try to create another instance of this Rc with the other type of metadata for the pair
+    /// (local -> shared, or shared -> local). If it is possible to create this new instance without
+    /// allocation or copying it will return it, else it will fail and return a ref to the same instance
+    #[inline]
+    pub fn try_to_other(&self) -> Result<FlexRc<META2, META, T>, &Self> {
+        let meta = &self.as_inner().metadata;
+
+        match meta.try_to_other(self.ptr.as_ptr()) {
+            Ok(inner) => {
+                // SAFETY: We are guaranteed to have a non-null pointer here
+                let inner = unsafe { NonNull::new_unchecked(inner) };
+                Ok(<FlexRc<META2, META, T>>::from_inner(inner))
+            }
+            Err(_) => Err(self),
+        }
+    }
+
+    /// Try to create another instance of this Rc with the other type of metadata for the pair
+    /// (local -> shared, or shared -> local). If it is possible to create this new instance without
+    /// allocation or copying it will return it, else it clone the underlying data and return a new Rc
+    #[inline]
+    pub fn to_other(&self) -> FlexRc<META2, META, T>
+    where
+        T: Clone,
+    {
+        match self.try_to_other() {
+            Ok(other) => other,
+            Err(this) => <FlexRc<META2, META, T>>::from_ref(&*this),
+        }
+    }
 }
 
 impl<META, META2, T> Deref for FlexRc<META, META2, T>
