@@ -2,13 +2,13 @@
 
 extern crate alloc;
 
-mod arc;
 mod hybrid;
-mod rc;
 mod regular;
+#[cfg(test)]
+mod tests;
 
-pub use arc::*;
-pub use rc::*;
+pub use hybrid::*;
+pub use regular::*;
 
 use alloc::alloc::{alloc, handle_alloc_error};
 use alloc::boxed::Box;
@@ -19,61 +19,61 @@ use core::ops::Deref;
 use core::ptr::NonNull;
 use core::{mem, ptr};
 
-pub trait Algorithm {
+pub trait Algorithm<META, META2, T: ?Sized> {
+    /// Create and return new metadata    
     fn create() -> Self;
 
-    // Increment reference counters
-    fn clone(&self);
-
-    // Decrement reference counters and return true if storage should be deallocated
-    fn drop(&self) -> bool;
-}
-
-pub trait RefCount {
-    /// Initializes a new `RefCount` implementation with a count of 1
-    fn new() -> Self;
-
-    /// Tests (atomically if necessary) whether or not this is the only instance (count == 1)
+    /// Returns true if this instance is the last one before final release of resources
     fn is_unique(&self) -> bool;
 
-    /// Returns the reference count
-    fn get_count(&self) -> usize;
+    /// Increment reference counters
+    fn clone(&self);
 
-    /// Increments the reference count
-    fn increment(&self);
+    /// Decrement reference counters and return true if storage should be deallocated
+    fn drop(&self) -> bool;
 
-    /// Decrements the reference count and returns true ref count is now 0
-    fn decrement(&self) -> bool;
+    /// Returns true if conversion is allowed to the other type without reallocation by consuming this instance
+    fn try_into_other(&self) -> bool;
 
-    /// Initiate a memory fence before taking further action
-    fn fence();
+    /// Returns true if conversion is allowed to the other type without reallocation and NOT consuming this instance
+    fn try_to_other(&self) -> bool;
+
+    /// Converts one inner type into another
+    fn convert(inner: NonNull<FlexRcInner<META, META2, T>>)
+        -> NonNull<FlexRcInner<META2, META, T>>;
 }
 
 // *** FlexRcInner ***
 
 // MUST ensure both `Rc` and `Arc` have identical memory layout
+#[doc(hidden)]
 #[repr(C)]
-struct FlexRcInner<META, T: ?Sized> {
+pub struct FlexRcInner<META, META2, T: ?Sized> {
     metadata: META,
+    phantom: PhantomData<META2>,
     data: T,
 }
 
-impl<META: RefCount, T> FlexRcInner<META, T> {
+impl<META, META2, T> FlexRcInner<META, META2, T>
+where
+    META: Algorithm<META, META2, T>,
+{
     #[inline]
     fn new(data: T) -> Self {
         Self {
-            metadata: META::new(),
+            metadata: META::create(),
+            phantom: PhantomData,
             data,
         }
     }
 }
 
-impl<META: RefCount, T> FlexRcInner<META, [mem::MaybeUninit<T>]> {
+impl<META, META2, T> FlexRcInner<META, META2, [mem::MaybeUninit<T>]> {
     #[inline]
-    unsafe fn assume_init(&mut self) -> &mut FlexRcInner<META, [T]> {
+    unsafe fn assume_init(&mut self) -> &mut FlexRcInner<META, META2, [T]> {
         // SAFETY: We hold an exclusive borrow and we just cast away `MaybeUninit<T>` which is
         // guaranteed to be layout/alignment identical to `T`
-        &mut *(self as *mut Self as *mut FlexRcInner<META, [T]>)
+        &mut *(self as *mut Self as *mut FlexRcInner<META, META2, [T]>)
     }
 }
 
@@ -81,12 +81,20 @@ impl<META: RefCount, T> FlexRcInner<META, [mem::MaybeUninit<T>]> {
 
 // MUST ensure both `Rc` and `Arc` have identical memory layout
 #[repr(C)]
-pub struct FlexRc<META: RefCount, T: ?Sized> {
-    ptr: NonNull<FlexRcInner<META, T>>,
-    phantom: PhantomData<FlexRcInner<META, T>>,
+pub struct FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2, T>,
+    T: ?Sized,
+{
+    ptr: NonNull<FlexRcInner<META, META2, T>>,
+    phantom: PhantomData<FlexRcInner<META, META2, T>>,
 }
 
-impl<META: RefCount, T> FlexRc<META, T> {
+impl<META, META2, T> FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2, T>,
+    META2: Algorithm<META2, META, T>,
+{
     #[inline]
     pub fn new(data: T) -> Self {
         let boxed = Box::new(FlexRcInner::new(data));
@@ -130,10 +138,7 @@ impl<META: RefCount, T> FlexRc<META, T> {
     /// other type is returned. If is not unique (reference count > 1), it will fail and return itself
     /// instead
     #[inline]
-    fn try_into_other<META2>(self) -> Result<FlexRc<META2, T>, Self>
-    where
-        META2: RefCount,
-    {
+    fn try_into_other(self) -> Result<FlexRc<META2, META, T>, Self> {
         // TODO: Ensure `is_unique` is a strong enough guarantee for Arc -> Rc, if not, it probably
         // isn't possible to do this, but Rc -> Arc is good for sure
 
@@ -157,27 +162,32 @@ impl<META: RefCount, T> FlexRc<META, T> {
     /// other type is returned. If is not unique (reference count > 1), a copy will be made and
     /// returned to ensure the call succeeds
     #[inline]
-    fn into_other<META2>(self) -> FlexRc<META2, T>
+    fn into_other(self) -> FlexRc<META2, META, T>
     where
-        META2: RefCount,
         T: Clone,
     {
         match self.try_into_other() {
             Ok(other) => other,
-            Err(this) => <FlexRc<META2, T>>::from_ref(&*this),
+            Err(this) => <FlexRc<META2, META, T>>::from_ref(&*this),
         }
     }
 }
 
-impl<META: RefCount, T: Copy> FlexRc<META, [T]> {
+impl<META, META2, T> FlexRc<META, META2, [T]>
+where
+    META: Algorithm<META, META2, [T]> + Algorithm<META, META2, [core::mem::MaybeUninit<T>]>,
+    T: Copy,
+{
     #[inline]
-    fn new_slice_uninit_inner<'a>(len: usize) -> &'a mut FlexRcInner<META, [mem::MaybeUninit<T>]> {
+    fn new_slice_uninit_inner<'a>(
+        len: usize,
+    ) -> &'a mut FlexRcInner<META, META2, [mem::MaybeUninit<T>]> {
         // Unwrap safety: All good as long as array length doesn't overflow in which case we panic
         let array_layout = Layout::array::<mem::MaybeUninit<T>>(len).expect("valid array length");
 
         // Unwrap safety: All good as long as same sort of overflow like above doesn't occur
         // Use () (size 0) because we will get the whole size from above when extending
-        let layout = Layout::new::<FlexRcInner<META, ()>>()
+        let layout = Layout::new::<FlexRcInner<META, META2, ()>>()
             .extend(array_layout)
             .expect("valid inner layout")
             .0
@@ -194,19 +204,22 @@ impl<META: RefCount, T: Copy> FlexRc<META, [T]> {
         };
 
         // This just makes a "fat pointer" setting the correct # of `T` entries in the metadata
-        let inner =
-            ptr::slice_from_raw_parts(ptr, len) as *mut FlexRcInner<META, [mem::MaybeUninit<T>]>;
+        let inner = ptr::slice_from_raw_parts(ptr, len)
+            as *mut FlexRcInner<META, META2, [mem::MaybeUninit<T>]>;
 
         // Create our inner
         // SAFETY: We made sure T is `Copy` and we carefully write out each field
         unsafe {
-            ptr::write(&mut (*inner).metadata, META::new());
+            ptr::write(
+                &mut (*inner).metadata,
+                <META as Algorithm<META, META2, [core::mem::MaybeUninit<T>]>>::create(),
+            );
             &mut (*inner)
         }
     }
 
     #[inline]
-    pub fn new_slice_uninit(len: usize) -> FlexRc<META, [mem::MaybeUninit<T>]> {
+    pub fn new_slice_uninit(len: usize) -> FlexRc<META, META2, [mem::MaybeUninit<T>]> {
         let inner = Self::new_slice_uninit_inner(len);
         FlexRc::from_inner(inner.into())
     }
@@ -237,12 +250,15 @@ impl<META: RefCount, T: Copy> FlexRc<META, [T]> {
     }
 }
 
-impl<META: RefCount, T> FlexRc<META, [mem::MaybeUninit<T>]> {
+impl<META, META2, T> FlexRc<META, META2, [mem::MaybeUninit<T>]>
+where
+    META: Algorithm<META, META2, [mem::MaybeUninit<T>]> + Algorithm<META, META2, [T]>,
+{
     /// # Safety
     /// We have unique ownership. We are trusting the user that this memory has been initialized
     /// (thus why it is an unsafe function)
     #[inline]
-    pub unsafe fn assume_init(self) -> FlexRc<META, [T]> {
+    pub unsafe fn assume_init(self) -> FlexRc<META, META2, [T]> {
         FlexRc::from_inner(
             // Avoid drop to ensure no ref count decrement
             mem::ManuallyDrop::new(self)
@@ -254,19 +270,26 @@ impl<META: RefCount, T> FlexRc<META, [mem::MaybeUninit<T>]> {
     }
 }
 
-impl<META: RefCount> FlexRc<META, [u8]> {
+impl<META, META2> FlexRc<META, META2, [u8]>
+where
+    META: Algorithm<META, META2, [u8]> + Algorithm<META, META2, [core::mem::MaybeUninit<u8>]>,
+{
     // There isn't an agreed upon way at a low level to go from [u8] -> str DST.
     // While casting may very well work forever, I decided to go the ultra safe
     // route and store as [U8] and just convert via deref to str
     #[inline]
-    pub fn from_str_ref(s: impl AsRef<str>) -> FlexRc<META, [u8]> {
+    pub fn from_str_ref(s: impl AsRef<str>) -> FlexRc<META, META2, [u8]> {
         FlexRc::from_slice_priv(s.as_ref().as_bytes())
     }
 }
 
-impl<META: RefCount, T: ?Sized> FlexRc<META, T> {
+impl<META, META2, T> FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2, T>,
+    T: ?Sized,
+{
     #[inline(always)]
-    fn from_inner(inner: NonNull<FlexRcInner<META, T>>) -> Self {
+    fn from_inner(inner: NonNull<FlexRcInner<META, META2, T>>) -> Self {
         Self {
             ptr: inner,
             phantom: PhantomData,
@@ -274,13 +297,16 @@ impl<META: RefCount, T: ?Sized> FlexRc<META, T> {
     }
 
     #[inline(always)]
-    fn as_inner(&self) -> &FlexRcInner<META, T> {
+    fn as_inner(&self) -> &FlexRcInner<META, META2, T> {
         // SAFETY: As long as we have an instance, our pointer is guaranteed valid
         unsafe { self.ptr.as_ref() }
     }
 }
 
-impl<META: RefCount, T> Deref for FlexRc<META, T> {
+impl<META, META2, T> Deref for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2, T>,
+{
     type Target = T;
 
     #[inline(always)]
@@ -290,7 +316,10 @@ impl<META: RefCount, T> Deref for FlexRc<META, T> {
 }
 
 #[cfg(feature = "str_deref")]
-impl<META: RefCount> Deref for FlexRc<META, [u8]> {
+impl<META, META2> Deref for FlexRc<META, META2, [u8]>
+where
+    META: Algorithm<META, META2, [u8]>,
+{
     type Target = str;
 
     #[inline(always)]
@@ -301,23 +330,29 @@ impl<META: RefCount> Deref for FlexRc<META, [u8]> {
     }
 }
 
-impl<META: RefCount, T: ?Sized> Clone for FlexRc<META, T> {
+impl<META, META2, T> Clone for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2, T>,
+    T: ?Sized,
+{
     #[inline(always)]
     fn clone(&self) -> Self {
-        self.as_inner().metadata.increment();
+        self.as_inner().metadata.clone();
         Self::from_inner(self.ptr)
     }
 }
 
-impl<META: RefCount, T: ?Sized> Drop for FlexRc<META, T> {
+impl<META, META2, T> Drop for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2, T>,
+    T: ?Sized,
+{
     #[inline(always)]
     fn drop(&mut self) {
-        let rc = &self.as_inner().metadata;
+        let meta = &self.as_inner().metadata;
 
         // If true, then ref count is zero
-        if rc.decrement() {
-            META::fence();
-
+        if meta.drop() {
             // SAFETY: We own this memory, so guaranteed to exist while we have instance
             unsafe {
                 // Once back into a box, it will drop and deallocate normally

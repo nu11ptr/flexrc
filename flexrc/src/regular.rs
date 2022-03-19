@@ -1,24 +1,32 @@
 use core::cell::Cell;
+use core::ptr::NonNull;
 use core::sync::atomic;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::Algorithm;
+use crate::{Algorithm, FlexRc, FlexRcInner};
 
 const MAX_LOCAL_COUNT: usize = usize::MAX;
 // Allow some room for overflow
 const MAX_SHARED_COUNT: usize = usize::MAX >> 1;
 
 #[repr(C)]
-struct LocalMeta {
+pub struct LocalMeta {
     count: Cell<usize>,
 }
 
-impl Algorithm for LocalMeta {
+pub type LocalRc<T> = FlexRc<LocalMeta, SharedMeta, T>;
+
+impl<T> Algorithm<LocalMeta, SharedMeta, T> for LocalMeta {
     #[inline]
     fn create() -> Self {
         Self {
             count: Cell::new(1),
         }
+    }
+
+    #[inline]
+    fn is_unique(&self) -> bool {
+        self.count.get() == 1
     }
 
     #[inline(always)]
@@ -39,19 +47,46 @@ impl Algorithm for LocalMeta {
         self.count.set(self.count.get() - 1);
         self.count.get() == 0
     }
+
+    #[inline]
+    fn try_into_other(&self) -> bool {
+        // Only if this is the last reference
+        <Self as Algorithm<LocalMeta, SharedMeta, T>>::is_unique(self)
+    }
+
+    #[inline]
+    fn try_to_other(&self) -> bool {
+        // This is never safe to do
+        false
+    }
+
+    fn convert(
+        inner: NonNull<FlexRcInner<LocalMeta, SharedMeta, T>>,
+    ) -> NonNull<FlexRcInner<SharedMeta, LocalMeta, T>> {
+        // TODO: Safety statement
+        inner.cast()
+    }
 }
 
 #[repr(C)]
-struct SharedMeta {
+pub struct SharedMeta {
     count: AtomicUsize,
 }
 
-impl Algorithm for SharedMeta {
+pub type SharedRc<T> = FlexRc<SharedMeta, LocalMeta, T>;
+
+impl<T> Algorithm<SharedMeta, LocalMeta, T> for SharedMeta {
     #[inline]
     fn create() -> Self {
         Self {
             count: AtomicUsize::new(1),
         }
+    }
+
+    #[inline]
+    fn is_unique(&self) -> bool {
+        // Long discussion on why this ordering is required: https://github.com/servo/servo/issues/21186
+        self.count.load(Ordering::Acquire) == 1
     }
 
     #[inline(always)]
@@ -72,6 +107,25 @@ impl Algorithm for SharedMeta {
         } else {
             false
         }
+    }
+
+    #[inline]
+    fn try_into_other(&self) -> bool {
+        // Only if this is the last reference
+        <Self as Algorithm<SharedMeta, LocalMeta, T>>::is_unique(self)
+    }
+
+    #[inline]
+    fn try_to_other(&self) -> bool {
+        // This is never safe to do
+        false
+    }
+
+    fn convert(
+        inner: NonNull<FlexRcInner<SharedMeta, LocalMeta, T>>,
+    ) -> NonNull<FlexRcInner<LocalMeta, SharedMeta, T>> {
+        // TODO: Safety
+        inner.cast()
     }
 }
 

@@ -1,9 +1,10 @@
 use core::cell::Cell;
 use core::marker::PhantomData;
+use core::ptr::NonNull;
 use core::sync::atomic;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::Algorithm;
+use crate::{Algorithm, FlexRc, FlexRcInner};
 
 // Entire counter is usable for local
 const MAX_LOCAL_COUNT: u32 = u32::MAX;
@@ -14,17 +15,22 @@ const LOCAL_PRESENT: u32 = (u32::MAX >> 1) + 1;
 // All bits set except top
 const CLEAR_LOCAL: u32 = u32::MAX >> 1;
 
-struct LocalMode;
-struct SharedMode;
+pub struct LocalMode;
+pub struct SharedMode;
 
 #[repr(C)]
-struct HybridMeta<MODE> {
+pub struct HybridMeta<MODE> {
     local_count: Cell<u32>,
     shared_count: AtomicU32,
     phantom: PhantomData<MODE>,
 }
 
-impl Algorithm for HybridMeta<LocalMode> {
+pub type HybridLocalRc<T> = FlexRc<HybridMeta<LocalMode>, HybridMeta<SharedMode>, T>;
+
+type LocalInner<T> = FlexRcInner<HybridMeta<LocalMode>, HybridMeta<SharedMode>, T>;
+type SharedInner<T> = FlexRcInner<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>;
+
+impl<T> Algorithm<HybridMeta<LocalMode>, HybridMeta<SharedMode>, T> for HybridMeta<LocalMode> {
     #[inline]
     fn create() -> Self {
         Self {
@@ -32,6 +38,13 @@ impl Algorithm for HybridMeta<LocalMode> {
             shared_count: AtomicU32::new(LOCAL_PRESENT),
             phantom: PhantomData,
         }
+    }
+
+    #[inline]
+    fn is_unique(&self) -> bool {
+        // if LOCAL_PRESENT is shared counter value that means only high bit is set and shared count == 0
+        // Long discussion on why this ordering is required: https://github.com/servo/servo/issues/21186
+        self.local_count.get() == 1 && self.shared_count.load(Ordering::Acquire) == LOCAL_PRESENT
     }
 
     #[inline(always)]
@@ -51,7 +64,7 @@ impl Algorithm for HybridMeta<LocalMode> {
         self.local_count.set(self.local_count.get() - 1);
 
         if self.local_count.get() == 0 {
-            // TODO: Is ordering 'Release' what we need?
+            // FIXME: Verify correct Ordering
             let old = self.shared_count.fetch_and(CLEAR_LOCAL, Ordering::Release);
 
             // If the value is just `LOCAL_PRESENT` that means only the top bit was set and the
@@ -61,9 +74,30 @@ impl Algorithm for HybridMeta<LocalMode> {
             false
         }
     }
+
+    #[inline]
+    fn try_into_other(&self) -> bool {
+        // This is always allowed
+        true
+    }
+
+    #[inline]
+    fn try_to_other(&self) -> bool {
+        // This is always allowed
+        true
+    }
+
+    #[inline]
+    fn convert(inner: NonNull<LocalInner<T>>) -> NonNull<SharedInner<T>> {
+        // Safety: These are literally the same types - we just use the `LocalMode` / `SharedMode`
+        // as a dummy type to force different types - totally safe
+        inner.cast()
+    }
 }
 
-impl Algorithm for HybridMeta<SharedMode> {
+pub type HybridSharedRc<T> = FlexRc<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>;
+
+impl<T> Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T> for HybridMeta<SharedMode> {
     #[inline]
     fn create() -> Self {
         Self {
@@ -71,6 +105,13 @@ impl Algorithm for HybridMeta<SharedMode> {
             shared_count: AtomicU32::new(1),
             phantom: PhantomData,
         }
+    }
+
+    #[inline]
+    fn is_unique(&self) -> bool {
+        // If set to 1, that means there are no local mode type left and this is last shared
+        // Long discussion on why this ordering is required: https://github.com/servo/servo/issues/21186
+        self.shared_count.load(Ordering::Acquire) == 1
     }
 
     #[inline(always)]
@@ -93,6 +134,26 @@ impl Algorithm for HybridMeta<SharedMode> {
         } else {
             false
         }
+    }
+
+    #[inline]
+    fn try_into_other(&self) -> bool {
+        // Try and make this thread into the local one by setting LOCAL_PRESENT bit. If old value
+        // is less than LOCAL_PRESENT we know it wasn't previously set
+        // FIXME: Verify correct Ordering
+        self.shared_count.fetch_or(LOCAL_PRESENT, Ordering::Acquire) < LOCAL_PRESENT
+    }
+
+    #[inline]
+    fn try_to_other(&self) -> bool {
+        <Self as Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>>::try_into_other(self)
+    }
+
+    #[inline]
+    fn convert(inner: NonNull<SharedInner<T>>) -> NonNull<LocalInner<T>> {
+        // Safety: These are literally the same types - we just use the `LocalMode` / `SharedMode`
+        // as a dummy type to force different types - totally safe
+        inner.cast()
     }
 }
 
