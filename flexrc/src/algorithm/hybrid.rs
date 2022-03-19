@@ -3,7 +3,19 @@ use core::marker::PhantomData;
 use core::sync::atomic;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use static_assertions::{assert_eq_align, assert_eq_size, assert_impl_all, assert_not_impl_any};
+
 use crate::{Algorithm, FlexRc, FlexRcInner};
+
+assert_eq_size!(HybridMeta<LocalMode>, HybridMeta<SharedMode>);
+assert_eq_align!(HybridMeta<LocalMode>, HybridMeta<SharedMode>);
+assert_eq_size!(LocalInner<usize>, SharedInner<usize>);
+assert_eq_align!(LocalInner<usize>, SharedInner<usize>);
+assert_eq_size!(LocalHybridRc<usize>, SharedHybridRc<usize>);
+assert_eq_align!(LocalHybridRc<usize>, SharedHybridRc<usize>);
+
+assert_impl_all!(SharedHybridRc<usize>: Send, Sync);
+assert_not_impl_any!(LocalHybridRc<usize>: Send, Sync);
 
 // Entire counter is usable for local
 const MAX_LOCAL_COUNT: u32 = u32::MAX;
@@ -106,6 +118,11 @@ impl Algorithm<HybridMeta<LocalMode>, HybridMeta<SharedMode>> for HybridMeta<Loc
 
 pub type SharedHybridRc<T> = FlexRc<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>;
 
+// SAFETY: We ensure what we are holding is Sync/Send and we have been careful to ensure invariants
+// that allow these marked to be safe
+unsafe impl<T: Send + Sync> Send for SharedHybridRc<T> {}
+unsafe impl<T: Send + Sync> Sync for SharedHybridRc<T> {}
+
 impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<SharedMode> {
     #[inline]
     fn create() -> Self {
@@ -181,8 +198,3 @@ impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<Sha
         self.try_into_other(inner)
     }
 }
-
-// SAFETY: We ensure what we are holding is Sync/Send and we have been careful to ensure invariants
-// that allow these marked to be safe
-unsafe impl Send for HybridMeta<SharedMode> {}
-unsafe impl Sync for HybridMeta<SharedMode> {}

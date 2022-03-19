@@ -7,3 +7,4 @@ edition = "2021"
 str_deref = []
 
 [dependencies]
+static_assertions = "1"

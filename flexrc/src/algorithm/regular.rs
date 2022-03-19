@@ -2,7 +2,19 @@ use core::cell::Cell;
 use core::sync::atomic;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use static_assertions::{assert_eq_align, assert_eq_size, assert_impl_all, assert_not_impl_any};
+
 use crate::{Algorithm, FlexRc, FlexRcInner};
+
+assert_eq_size!(LocalMeta, SharedMeta);
+assert_eq_align!(LocalMeta, SharedMeta);
+assert_eq_size!(LocalInner<usize>, SharedInner<usize>);
+assert_eq_align!(LocalInner<usize>, SharedInner<usize>);
+assert_eq_size!(LocalRc<usize>, SharedRc<usize>);
+assert_eq_align!(LocalRc<usize>, SharedRc<usize>);
+
+assert_impl_all!(SharedRc<usize>: Send, Sync);
+assert_not_impl_any!(LocalRc<usize>: Send, Sync);
 
 const MAX_LOCAL_COUNT: usize = usize::MAX;
 // Allow some room for overflow
@@ -59,8 +71,8 @@ impl Algorithm<LocalMeta, SharedMeta> for LocalMeta {
             // Safety:
             // a) both types are the same struct and identical other than usage of different META types
             // b) type is `repr(C)` so we know the layout
-            // c) although not required, we will ensure same alignment (TODO)
-            // d) we will validate at compile time `LocalMeta` and `SharedMeta` are same size (TODO)
+            // c) although not required, we will ensure same alignment
+            // d) we will validate at compile time `LocalMeta` and `SharedMeta` are same size
             // e) Cell<usize> and AtomicUsize are same size and layout
             // f) only the two pre-defined metadata pairs are allowed
             Ok(inner as *mut SharedInner<T>)
@@ -85,6 +97,11 @@ pub struct SharedMeta {
 }
 
 pub type SharedRc<T> = FlexRc<SharedMeta, LocalMeta, T>;
+
+// SAFETY: We ensure what we are holding is Sync/Send and we have been careful to ensure invariants
+// that allow these marked to be safe
+unsafe impl<T: Send + Sync> Send for SharedRc<T> {}
+unsafe impl<T: Sync + Sync> Sync for SharedRc<T> {}
 
 impl Algorithm<SharedMeta, LocalMeta> for SharedMeta {
     #[inline]
@@ -148,8 +165,3 @@ impl Algorithm<SharedMeta, LocalMeta> for SharedMeta {
         Err(inner)
     }
 }
-
-// SAFETY: We ensure what we are holding is Sync/Send and we have been careful to ensure invariants
-// that allow these marked to be safe
-unsafe impl Send for SharedMeta {}
-unsafe impl Sync for SharedMeta {}
