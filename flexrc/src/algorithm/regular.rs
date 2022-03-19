@@ -101,7 +101,7 @@ pub type SharedRc<T> = FlexRc<SharedMeta, LocalMeta, T>;
 // SAFETY: We ensure what we are holding is Sync/Send and we have been careful to ensure invariants
 // that allow these marked to be safe
 unsafe impl<T: Send + Sync> Send for SharedRc<T> {}
-unsafe impl<T: Sync + Sync> Sync for SharedRc<T> {}
+unsafe impl<T: Send + Sync> Sync for SharedRc<T> {}
 
 impl Algorithm<SharedMeta, LocalMeta> for SharedMeta {
     #[inline]
