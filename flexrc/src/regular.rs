@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ptr::NonNull;
 use core::sync::atomic;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -16,7 +15,10 @@ pub struct LocalMeta {
 
 pub type LocalRc<T> = FlexRc<LocalMeta, SharedMeta, T>;
 
-impl<T> Algorithm<LocalMeta, SharedMeta, T> for LocalMeta {
+type LocalInner<T> = FlexRcInner<LocalMeta, SharedMeta, T>;
+type SharedInner<T> = FlexRcInner<SharedMeta, LocalMeta, T>;
+
+impl Algorithm<LocalMeta, SharedMeta> for LocalMeta {
     #[inline]
     fn create() -> Self {
         Self {
@@ -49,22 +51,31 @@ impl<T> Algorithm<LocalMeta, SharedMeta, T> for LocalMeta {
     }
 
     #[inline]
-    fn try_into_other(&self) -> bool {
-        // Only if this is the last reference
-        <Self as Algorithm<LocalMeta, SharedMeta, T>>::is_unique(self)
+    fn try_into_other<T: ?Sized>(
+        &self,
+        inner: *mut LocalInner<T>,
+    ) -> Result<*mut SharedInner<T>, *mut LocalInner<T>> {
+        if self.is_unique() {
+            // Safety:
+            // a) both types are the same struct and identical other than usage of different META types
+            // b) type is `repr(C)` so we know the layout
+            // c) although not required, we will ensure same alignment (TODO)
+            // d) we will validate at compile time `LocalMeta` and `SharedMeta` are same size (TODO)
+            // e) Cell<usize> and AtomicUsize are same size and layout
+            // f) only the two pre-defined metadata pairs are allowed
+            Ok(inner as *mut SharedInner<T>)
+        } else {
+            Err(inner)
+        }
     }
 
     #[inline]
-    fn try_to_other(&self) -> bool {
+    fn try_to_other<T: ?Sized>(
+        &self,
+        inner: *mut LocalInner<T>,
+    ) -> Result<*mut SharedInner<T>, *mut LocalInner<T>> {
         // This is never safe to do
-        false
-    }
-
-    fn convert(
-        inner: NonNull<FlexRcInner<LocalMeta, SharedMeta, T>>,
-    ) -> NonNull<FlexRcInner<SharedMeta, LocalMeta, T>> {
-        // TODO: Safety statement
-        inner.cast()
+        Err(inner)
     }
 }
 
@@ -75,7 +86,7 @@ pub struct SharedMeta {
 
 pub type SharedRc<T> = FlexRc<SharedMeta, LocalMeta, T>;
 
-impl<T> Algorithm<SharedMeta, LocalMeta, T> for SharedMeta {
+impl Algorithm<SharedMeta, LocalMeta> for SharedMeta {
     #[inline]
     fn create() -> Self {
         Self {
@@ -110,22 +121,31 @@ impl<T> Algorithm<SharedMeta, LocalMeta, T> for SharedMeta {
     }
 
     #[inline]
-    fn try_into_other(&self) -> bool {
-        // Only if this is the last reference
-        <Self as Algorithm<SharedMeta, LocalMeta, T>>::is_unique(self)
+    fn try_into_other<T: ?Sized>(
+        &self,
+        inner: *mut SharedInner<T>,
+    ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
+        if self.is_unique() {
+            // Safety:
+            // a) both types are the same struct and identical other than usage of different META types
+            // b) type is `repr(C)` so we know the layout
+            // c) although not required, we will ensure same alignment (TODO)
+            // d) we will validate at compile time `LocalMeta` and `SharedMeta` are same size (TODO)
+            // e) Cell<usize> and AtomicUsize are same size and layout
+            // f) only the two pre-defined metadata pairs are allowed
+            Ok(inner as *mut LocalInner<T>)
+        } else {
+            Err(inner)
+        }
     }
 
     #[inline]
-    fn try_to_other(&self) -> bool {
+    fn try_to_other<T: ?Sized>(
+        &self,
+        inner: *mut SharedInner<T>,
+    ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
         // This is never safe to do
-        false
-    }
-
-    fn convert(
-        inner: NonNull<FlexRcInner<SharedMeta, LocalMeta, T>>,
-    ) -> NonNull<FlexRcInner<LocalMeta, SharedMeta, T>> {
-        // TODO: Safety
-        inner.cast()
+        Err(inner)
     }
 }
 

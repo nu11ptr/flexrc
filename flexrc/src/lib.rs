@@ -19,7 +19,7 @@ use core::ops::Deref;
 use core::ptr::NonNull;
 use core::{mem, ptr};
 
-pub trait Algorithm<META, META2, T: ?Sized> {
+pub trait Algorithm<META, META2> {
     /// Create and return new metadata    
     fn create() -> Self;
 
@@ -32,15 +32,17 @@ pub trait Algorithm<META, META2, T: ?Sized> {
     /// Decrement reference counters and return true if storage should be deallocated
     fn drop(&self) -> bool;
 
-    /// Returns true if conversion is allowed to the other type without reallocation by consuming this instance
-    fn try_into_other(&self) -> bool;
+    /// Attempts to converts one inner type into another while consuming the other
+    fn try_into_other<T: ?Sized>(
+        &self,
+        inner: *mut FlexRcInner<META, META2, T>,
+    ) -> Result<*mut FlexRcInner<META2, META, T>, *mut FlexRcInner<META, META2, T>>;
 
-    /// Returns true if conversion is allowed to the other type without reallocation and NOT consuming this instance
-    fn try_to_other(&self) -> bool;
-
-    /// Converts one inner type into another
-    fn convert(inner: NonNull<FlexRcInner<META, META2, T>>)
-        -> NonNull<FlexRcInner<META2, META, T>>;
+    /// Attempts to converts one inner type into another while consuming the other
+    fn try_to_other<T: ?Sized>(
+        &self,
+        inner: *mut FlexRcInner<META, META2, T>,
+    ) -> Result<*mut FlexRcInner<META2, META, T>, *mut FlexRcInner<META, META2, T>>;
 }
 
 // *** FlexRcInner ***
@@ -56,7 +58,7 @@ pub struct FlexRcInner<META, META2, T: ?Sized> {
 
 impl<META, META2, T> FlexRcInner<META, META2, T>
 where
-    META: Algorithm<META, META2, T>,
+    META: Algorithm<META, META2>,
 {
     #[inline]
     fn new(data: T) -> Self {
@@ -83,7 +85,8 @@ impl<META, META2, T> FlexRcInner<META, META2, [mem::MaybeUninit<T>]> {
 #[repr(C)]
 pub struct FlexRc<META, META2, T>
 where
-    META: Algorithm<META, META2, T>,
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
     T: ?Sized,
 {
     ptr: NonNull<FlexRcInner<META, META2, T>>,
@@ -92,8 +95,8 @@ where
 
 impl<META, META2, T> FlexRc<META, META2, T>
 where
-    META: Algorithm<META, META2, T>,
-    META2: Algorithm<META2, META, T>,
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
 {
     #[inline]
     pub fn new(data: T) -> Self {
@@ -132,50 +135,12 @@ where
     pub unsafe fn get_mut_unchecked(&mut self) -> &mut T {
         &mut (*self.ptr.as_ptr()).data
     }
-
-    /// Try to convert this into a type with a different reference counter (likely `Rc` -> `Arc` or
-    /// `Arc` to `Rc`). If the instance is unique (reference count == 1) it will succeed and the
-    /// other type is returned. If is not unique (reference count > 1), it will fail and return itself
-    /// instead
-    #[inline]
-    fn try_into_other(self) -> Result<FlexRc<META2, META, T>, Self> {
-        // TODO: Ensure `is_unique` is a strong enough guarantee for Arc -> Rc, if not, it probably
-        // isn't possible to do this, but Rc -> Arc is good for sure
-
-        // Safety: If we are the only unique instance then we are safe to do this
-        if self.is_unique() {
-            // SAFETY:
-            // a) both types are the same struct and identical other than usage of different RC types
-            // b) type is `repr(C)` so we know the layout
-            // c) although not required, we will ensure same alignment (TODO)
-            // d) we will validate at compile time `AtomicUsize` and `Cell<usize>` are same size (TODO)
-            // e) only the two pre-defined RCs (`AtomicUsize` and `Cell<usize>` are allowed)
-            // f) this will not be made `pub` with arbitrary META
-            Ok(unsafe { mem::transmute(self) })
-        } else {
-            Err(self)
-        }
-    }
-
-    /// Convert this into a type with a different reference counter (likely `Rc` -> `Arc` or
-    /// `Arc` to `Rc`). If the instance is unique (reference count == 1) it will succeed and the
-    /// other type is returned. If is not unique (reference count > 1), a copy will be made and
-    /// returned to ensure the call succeeds
-    #[inline]
-    fn into_other(self) -> FlexRc<META2, META, T>
-    where
-        T: Clone,
-    {
-        match self.try_into_other() {
-            Ok(other) => other,
-            Err(this) => <FlexRc<META2, META, T>>::from_ref(&*this),
-        }
-    }
 }
 
 impl<META, META2, T> FlexRc<META, META2, [T]>
 where
-    META: Algorithm<META, META2, [T]> + Algorithm<META, META2, [core::mem::MaybeUninit<T>]>,
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
     T: Copy,
 {
     #[inline]
@@ -212,7 +177,7 @@ where
         unsafe {
             ptr::write(
                 &mut (*inner).metadata,
-                <META as Algorithm<META, META2, [core::mem::MaybeUninit<T>]>>::create(),
+                <META as Algorithm<META, META2>>::create(),
             );
             &mut (*inner)
         }
@@ -252,7 +217,8 @@ where
 
 impl<META, META2, T> FlexRc<META, META2, [mem::MaybeUninit<T>]>
 where
-    META: Algorithm<META, META2, [mem::MaybeUninit<T>]> + Algorithm<META, META2, [T]>,
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
 {
     /// # Safety
     /// We have unique ownership. We are trusting the user that this memory has been initialized
@@ -272,7 +238,8 @@ where
 
 impl<META, META2> FlexRc<META, META2, [u8]>
 where
-    META: Algorithm<META, META2, [u8]> + Algorithm<META, META2, [core::mem::MaybeUninit<u8>]>,
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
 {
     // There isn't an agreed upon way at a low level to go from [u8] -> str DST.
     // While casting may very well work forever, I decided to go the ultra safe
@@ -285,7 +252,8 @@ where
 
 impl<META, META2, T> FlexRc<META, META2, T>
 where
-    META: Algorithm<META, META2, T>,
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
     T: ?Sized,
 {
     #[inline(always)]
@@ -301,11 +269,43 @@ where
         // SAFETY: As long as we have an instance, our pointer is guaranteed valid
         unsafe { self.ptr.as_ref() }
     }
+
+    /// Try to convert this into a type with the other type of metadata for the pair (local -> shared,
+    /// or shared -> local). If it is possible it will return the new type, else it will fail and
+    /// return itself instead
+    #[inline]
+    pub fn try_into_other(self) -> Result<FlexRc<META2, META, T>, Self> {
+        let meta = &self.as_inner().metadata;
+
+        match meta.try_into_other(self.ptr.as_ptr()) {
+            Ok(inner) => {
+                // SAFETY: We are guaranteed to have a non-null pointer here
+                let inner = unsafe { NonNull::new_unchecked(inner) };
+                Ok(<FlexRc<META2, META, T>>::from_inner(inner))
+            }
+            Err(_) => Err(self),
+        }
+    }
+
+    /// Try to convert this into a type with the other type of metadata for the pair (local -> shared,
+    /// or shared -> local). If it is possible it will return the new type without additional copy
+    /// or allocation, but if not possible, it will clone the underlying data and return a new Rc
+    #[inline]
+    pub fn into_other(self) -> FlexRc<META2, META, T>
+    where
+        T: Clone,
+    {
+        match self.try_into_other() {
+            Ok(other) => other,
+            Err(this) => <FlexRc<META2, META, T>>::from_ref(&*this),
+        }
+    }
 }
 
 impl<META, META2, T> Deref for FlexRc<META, META2, T>
 where
-    META: Algorithm<META, META2, T>,
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
 {
     type Target = T;
 
@@ -318,7 +318,8 @@ where
 #[cfg(feature = "str_deref")]
 impl<META, META2> Deref for FlexRc<META, META2, [u8]>
 where
-    META: Algorithm<META, META2, [u8]>,
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
 {
     type Target = str;
 
@@ -332,7 +333,8 @@ where
 
 impl<META, META2, T> Clone for FlexRc<META, META2, T>
 where
-    META: Algorithm<META, META2, T>,
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
     T: ?Sized,
 {
     #[inline(always)]
@@ -344,7 +346,8 @@ where
 
 impl<META, META2, T> Drop for FlexRc<META, META2, T>
 where
-    META: Algorithm<META, META2, T>,
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
     T: ?Sized,
 {
     #[inline(always)]

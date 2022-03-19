@@ -1,6 +1,5 @@
 use core::cell::Cell;
 use core::marker::PhantomData;
-use core::ptr::NonNull;
 use core::sync::atomic;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -30,7 +29,7 @@ pub type HybridLocalRc<T> = FlexRc<HybridMeta<LocalMode>, HybridMeta<SharedMode>
 type LocalInner<T> = FlexRcInner<HybridMeta<LocalMode>, HybridMeta<SharedMode>, T>;
 type SharedInner<T> = FlexRcInner<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>;
 
-impl<T> Algorithm<HybridMeta<LocalMode>, HybridMeta<SharedMode>, T> for HybridMeta<LocalMode> {
+impl Algorithm<HybridMeta<LocalMode>, HybridMeta<SharedMode>> for HybridMeta<LocalMode> {
     #[inline]
     fn create() -> Self {
         Self {
@@ -76,28 +75,38 @@ impl<T> Algorithm<HybridMeta<LocalMode>, HybridMeta<SharedMode>, T> for HybridMe
     }
 
     #[inline]
-    fn try_into_other(&self) -> bool {
+    fn try_into_other<T: ?Sized>(
+        &self,
+        inner: *mut LocalInner<T>,
+    ) -> Result<*mut SharedInner<T>, *mut LocalInner<T>> {
         // This is always allowed
-        true
+
+        // Safety: These are literally the same type - we invented the `SharedMode` and `LocalMode` tags
+        // to FORCE new types where there wouldn't otherwise be so this is safe to cast
+        let inner = inner as *mut SharedInner<T>;
+
+        // Since a) creating a new instance, not reusing b) using a diff ref counter field we now
+        // need to force a clone
+        // SAFETY: See above
+        unsafe {
+            (*inner).metadata.clone();
+        }
+        Ok(inner)
     }
 
     #[inline]
-    fn try_to_other(&self) -> bool {
-        // This is always allowed
-        true
-    }
-
-    #[inline]
-    fn convert(inner: NonNull<LocalInner<T>>) -> NonNull<SharedInner<T>> {
-        // Safety: These are literally the same types - we just use the `LocalMode` / `SharedMode`
-        // as a dummy type to force different types - totally safe
-        inner.cast()
+    fn try_to_other<T: ?Sized>(
+        &self,
+        inner: *mut LocalInner<T>,
+    ) -> Result<*mut SharedInner<T>, *mut LocalInner<T>> {
+        // Since we can always keep the original, both are the same
+        self.try_into_other(inner)
     }
 }
 
 pub type HybridSharedRc<T> = FlexRc<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>;
 
-impl<T> Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T> for HybridMeta<SharedMode> {
+impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<SharedMode> {
     #[inline]
     fn create() -> Self {
         Self {
@@ -137,23 +146,39 @@ impl<T> Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T> for HybridMe
     }
 
     #[inline]
-    fn try_into_other(&self) -> bool {
+    fn try_into_other<T: ?Sized>(
+        &self,
+        inner: *mut SharedInner<T>,
+    ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
         // Try and make this thread into the local one by setting LOCAL_PRESENT bit. If old value
-        // is less than LOCAL_PRESENT we know it wasn't previously set
+        // is less than LOCAL_PRESENT we know it wasn't previously set (NOTE: Without tracking and
+        // comparing a thread ID field it means we can only call this once and it will fail on
+        // successive invocations, even when called from the proper thread)
         // FIXME: Verify correct Ordering
-        self.shared_count.fetch_or(LOCAL_PRESENT, Ordering::Acquire) < LOCAL_PRESENT
+        if self.shared_count.fetch_or(LOCAL_PRESENT, Ordering::Acquire) < LOCAL_PRESENT {
+            // Safety: These are literally the same type - we invented the `SharedMode` and `LocalMode` tags
+            // to FORCE new types where there wouldn't otherwise be so this is safe to cast
+            let inner = inner as *mut LocalInner<T>;
+
+            // Since a) creating a new instance, not reusing b) using a diff ref counter field we now
+            // need to force a clone
+            // SAFETY: See above
+            unsafe {
+                (*inner).metadata.clone();
+            }
+            Ok(inner)
+        } else {
+            Err(inner)
+        }
     }
 
     #[inline]
-    fn try_to_other(&self) -> bool {
-        <Self as Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>>::try_into_other(self)
-    }
-
-    #[inline]
-    fn convert(inner: NonNull<SharedInner<T>>) -> NonNull<LocalInner<T>> {
-        // Safety: These are literally the same types - we just use the `LocalMode` / `SharedMode`
-        // as a dummy type to force different types - totally safe
-        inner.cast()
+    fn try_to_other<T: ?Sized>(
+        &self,
+        inner: *mut SharedInner<T>,
+    ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
+        // Since we can always keep the original, both are the same
+        self.try_into_other(inner)
     }
 }
 
