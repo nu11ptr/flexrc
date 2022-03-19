@@ -2,7 +2,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use flexrc::{LocalRc, SharedRc};
+use flexrc::{LocalHybridRc, LocalRc, SharedHybridRc, SharedRc};
 
 const ITERATIONS: usize = 10_000;
 
@@ -41,7 +41,11 @@ create!(
     "LocalRc",
     |s: &str| LocalRc::from_str_ref(s),
     "SharedRc",
-    |s: &str| SharedRc::from_str_ref(s)
+    |s: &str| SharedRc::from_str_ref(s),
+    "LocalHybridRc",
+    |s: &str| LocalHybridRc::from_str_ref(s),
+    "SharedHybridRc",
+    |s: &str| SharedHybridRc::from_str_ref(s)
 );
 
 criterion_group!(benches, create);

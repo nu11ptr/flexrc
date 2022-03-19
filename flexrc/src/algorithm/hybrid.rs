@@ -24,7 +24,7 @@ pub struct HybridMeta<MODE> {
     phantom: PhantomData<MODE>,
 }
 
-pub type HybridLocalRc<T> = FlexRc<HybridMeta<LocalMode>, HybridMeta<SharedMode>, T>;
+pub type LocalHybridRc<T> = FlexRc<HybridMeta<LocalMode>, HybridMeta<SharedMode>, T>;
 
 type LocalInner<T> = FlexRcInner<HybridMeta<LocalMode>, HybridMeta<SharedMode>, T>;
 type SharedInner<T> = FlexRcInner<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>;
@@ -104,7 +104,7 @@ impl Algorithm<HybridMeta<LocalMode>, HybridMeta<SharedMode>> for HybridMeta<Loc
     }
 }
 
-pub type HybridSharedRc<T> = FlexRc<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>;
+pub type SharedHybridRc<T> = FlexRc<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>;
 
 impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<SharedMode> {
     #[inline]
