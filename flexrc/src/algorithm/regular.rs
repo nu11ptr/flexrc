@@ -4,6 +4,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use static_assertions::{assert_eq_align, assert_eq_size, assert_impl_all, assert_not_impl_any};
 
+use crate::algorithm::abort;
 use crate::{Algorithm, FlexRc, FlexRcInner};
 
 assert_eq_size!(LocalMeta, SharedMeta);
@@ -49,8 +50,7 @@ impl Algorithm<LocalMeta, SharedMeta> for LocalMeta {
 
         // TODO: This check adds 15-16% clone overhead - truly needed?
         if old == MAX_LOCAL_COUNT {
-            // Abort not available on no_std
-            panic!("Reference count overflow");
+            abort()
         }
 
         self.count.set(old + 1);
@@ -122,8 +122,7 @@ impl Algorithm<SharedMeta, LocalMeta> for SharedMeta {
         let old = self.count.fetch_add(1, Ordering::Relaxed);
 
         if old > MAX_SHARED_COUNT {
-            // Abort not available on no_std
-            panic!("Reference count overflow");
+            abort()
         }
     }
 

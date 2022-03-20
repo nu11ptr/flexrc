@@ -1,4 +1,6 @@
 mod hybrid;
+#[cfg(feature = "track_threads")]
+mod hybrid_threads;
 mod regular;
 
 use crate::FlexRcInner;
@@ -30,4 +32,17 @@ pub trait Algorithm<META, META2> {
         &self,
         inner: *mut FlexRcInner<META, META2, T>,
     ) -> Result<*mut FlexRcInner<META2, META, T>, *mut FlexRcInner<META, META2, T>>;
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn abort() {
+    std::process::abort()
+}
+
+#[cfg(not(feature = "std"))]
+#[inline]
+fn abort() {
+    // Abort not available on no_std
+    panic!("Reference count overflow");
 }

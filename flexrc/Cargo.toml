@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+default = ["std"]
+std = []
+track_threads = ["std"]
 str_deref = []
 
 [dependencies]

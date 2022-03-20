@@ -1,4 +1,4 @@
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
 
@@ -147,10 +147,7 @@ where
         // Create our inner
         // SAFETY: We made sure T is `Copy` and we carefully write out each field
         unsafe {
-            ptr::write(
-                &mut (*inner).metadata,
-                <META as Algorithm<META, META2>>::create(),
-            );
+            ptr::write(&mut (*inner).metadata, META::create());
             &mut (*inner)
         }
     }
