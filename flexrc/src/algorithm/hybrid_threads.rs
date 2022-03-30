@@ -10,16 +10,6 @@ static ONCE: Once = Once::new();
 
 thread_local! { pub(crate) static THREAD_ID: ThreadId = thread_tracker().unwrap().get_new_id() }
 
-fn thread_tracker() -> Option<&'static ThreadTracker> {
-    // SAFETY: This works because THREAD_TRACKER init is synchronized via Once
-    unsafe {
-        ONCE.call_once(|| {
-            THREAD_TRACKER = Some(ThreadTracker::default());
-        });
-        THREAD_TRACKER.as_ref()
-    }
-}
-
 // *** Thread Id ***
 
 pub(crate) struct ThreadId(pub usize);
@@ -31,6 +21,16 @@ impl Drop for ThreadId {
 }
 
 // *** Thread Tracker ***
+
+fn thread_tracker() -> Option<&'static ThreadTracker> {
+    // SAFETY: This works because THREAD_TRACKER init is synchronized via Once
+    unsafe {
+        ONCE.call_once(|| {
+            THREAD_TRACKER = Some(ThreadTracker::default());
+        });
+        THREAD_TRACKER.as_ref()
+    }
+}
 
 #[derive(Default)]
 struct ThreadTrackerInner {

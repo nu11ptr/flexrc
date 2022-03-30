@@ -1,6 +1,12 @@
 [package]
 name = "flexrc"
 version = "0.1.0"
+authors = ["Scott Meeuwsen <smeeuwsen@gmail.com>"]
+license = "MIT OR Apache-2.0"
+description = "A flexible/modular alternative to Rust Rc/Arc with unique hybrid capabilities"
+repository = "https://github.com/nu11ptr/flexrc"
+documentation = "https://docs.rs/flexrc"
+readme = "README.md"
 edition = "2021"
 
 [features]
