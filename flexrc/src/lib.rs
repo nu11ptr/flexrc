@@ -174,7 +174,7 @@ where
         unsafe {
             ptr::copy_nonoverlapping(
                 data.as_ptr(),
-                &mut (*inner).data as *mut [mem::MaybeUninit<T>] as *mut [T] as *mut T,
+                &mut inner.data as *mut [mem::MaybeUninit<T>] as *mut [T] as *mut T,
                 data.len(),
             );
         }
@@ -297,7 +297,7 @@ where
     {
         match self.try_to_other() {
             Ok(other) => other,
-            Err(this) => <FlexRc<META2, META, T>>::from_ref(&*this),
+            Err(this) => <FlexRc<META2, META, T>>::from_ref(this),
         }
     }
 }
@@ -359,7 +359,7 @@ where
             // SAFETY: We own this memory, so guaranteed to exist while we have instance
             unsafe {
                 // Once back into a box, it will drop and deallocate normally
-                Box::from_raw(self.ptr.as_ptr());
+                let _ = Box::from_raw(self.ptr.as_ptr());
             }
         }
     }
