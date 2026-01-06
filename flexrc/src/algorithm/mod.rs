@@ -25,13 +25,19 @@ pub trait Algorithm<META, META2> {
     fn drop(&self) -> bool;
 
     /// Attempts to converts one inner type into another while consuming the other
-    fn try_into_other<T: ?Sized>(
+    ///
+    /// # Safety
+    /// It is up to the recipient to ensure the pointer is used correctly
+    unsafe fn try_into_other<T: ?Sized>(
         &self,
         inner: *mut FlexRcInner<META, META2, T>,
     ) -> Result<*mut FlexRcInner<META2, META, T>, *mut FlexRcInner<META, META2, T>>;
 
     /// Attempts to converts one inner type into another but NOT consuming the other
-    fn try_to_other<T: ?Sized>(
+    ///
+    /// # Safety
+    /// It is up to the recipient to ensure the pointer is used correctly
+    unsafe fn try_to_other<T: ?Sized>(
         &self,
         inner: *mut FlexRcInner<META, META2, T>,
     ) -> Result<*mut FlexRcInner<META2, META, T>, *mut FlexRcInner<META, META2, T>>;

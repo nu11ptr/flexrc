@@ -126,7 +126,7 @@ impl Algorithm<Meta<LocalMode>, Meta<SharedMode>> for Meta<LocalMode> {
     }
 
     #[inline]
-    fn try_into_other<T: ?Sized>(
+    unsafe fn try_into_other<T: ?Sized>(
         &self,
         inner: *mut LocalInner<T>,
     ) -> Result<*mut SharedInner<T>, *mut LocalInner<T>> {
@@ -155,7 +155,7 @@ impl Algorithm<Meta<LocalMode>, Meta<SharedMode>> for Meta<LocalMode> {
     }
 
     #[inline]
-    fn try_to_other<T: ?Sized>(
+    unsafe fn try_to_other<T: ?Sized>(
         &self,
         inner: *mut LocalInner<T>,
     ) -> Result<*mut SharedInner<T>, *mut LocalInner<T>> {
@@ -216,7 +216,7 @@ impl Algorithm<Meta<SharedMode>, Meta<LocalMode>> for Meta<SharedMode> {
     }
 
     #[inline]
-    fn try_into_other<T: ?Sized>(
+    unsafe fn try_into_other<T: ?Sized>(
         &self,
         inner: *mut SharedInner<T>,
     ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
@@ -242,7 +242,7 @@ impl Algorithm<Meta<SharedMode>, Meta<LocalMode>> for Meta<SharedMode> {
     }
 
     #[inline]
-    fn try_to_other<T: ?Sized>(
+    unsafe fn try_to_other<T: ?Sized>(
         &self,
         inner: *mut SharedInner<T>,
     ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {

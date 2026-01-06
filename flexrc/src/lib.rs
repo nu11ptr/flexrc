@@ -246,7 +246,8 @@ where
     pub fn try_into_other(self) -> Result<FlexRc<META2, META, T>, Self> {
         let meta = &self.as_inner().metadata;
 
-        match meta.try_into_other(self.ptr.as_ptr()) {
+        // SAFETY: It is up to the recipient to ensure the pointer is valid
+        match unsafe { meta.try_into_other(self.ptr.as_ptr()) } {
             Ok(inner) => {
                 // SAFETY: We are guaranteed to have a non-null pointer here
                 let inner = unsafe { NonNull::new_unchecked(inner) };
@@ -277,7 +278,8 @@ where
     pub fn try_to_other(&self) -> Result<FlexRc<META2, META, T>, &Self> {
         let meta = &self.as_inner().metadata;
 
-        match meta.try_to_other(self.ptr.as_ptr()) {
+        // SAFETY: It is up to the recipient to ensure the pointer is valid
+        match unsafe { meta.try_to_other(self.ptr.as_ptr()) } {
             Ok(inner) => {
                 // SAFETY: We are guaranteed to have a non-null pointer here
                 let inner = unsafe { NonNull::new_unchecked(inner) };

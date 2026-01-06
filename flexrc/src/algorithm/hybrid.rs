@@ -102,7 +102,7 @@ impl Algorithm<HybridMeta<LocalMode>, HybridMeta<SharedMode>> for HybridMeta<Loc
     }
 
     #[inline]
-    fn try_into_other<T: ?Sized>(
+    unsafe fn try_into_other<T: ?Sized>(
         &self,
         inner: *mut LocalInner<T>,
     ) -> Result<*mut SharedInner<T>, *mut LocalInner<T>> {
@@ -122,7 +122,7 @@ impl Algorithm<HybridMeta<LocalMode>, HybridMeta<SharedMode>> for HybridMeta<Loc
     }
 
     #[inline]
-    fn try_to_other<T: ?Sized>(
+    unsafe fn try_to_other<T: ?Sized>(
         &self,
         inner: *mut LocalInner<T>,
     ) -> Result<*mut SharedInner<T>, *mut LocalInner<T>> {
@@ -181,7 +181,7 @@ impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<Sha
 
     #[cfg(feature = "track_threads")]
     #[inline]
-    fn try_into_other<T: ?Sized>(
+    unsafe fn try_into_other<T: ?Sized>(
         &self,
         inner: *mut SharedInner<T>,
     ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
@@ -231,7 +231,7 @@ impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<Sha
 
     #[cfg(not(feature = "track_threads"))]
     #[inline]
-    fn try_into_other<T: ?Sized>(
+    unsafe fn try_into_other<T: ?Sized>(
         &self,
         inner: *mut SharedInner<T>,
     ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
@@ -258,7 +258,7 @@ impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<Sha
     }
 
     #[inline]
-    fn try_to_other<T: ?Sized>(
+    unsafe fn try_to_other<T: ?Sized>(
         &self,
         inner: *mut SharedInner<T>,
     ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
