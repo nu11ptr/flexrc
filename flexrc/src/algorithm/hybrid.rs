@@ -10,7 +10,7 @@ use static_assertions::{assert_eq_align, assert_eq_size, assert_impl_all, assert
 use crate::algorithm::abort;
 #[cfg(feature = "track_threads")]
 use crate::algorithm::hybrid_threads::THREAD_ID;
-use crate::{Algorithm, FlexRc, FlexRcInner};
+use crate::{Algorithm, FlexRc, FlexRcInner, LocalMode, SharedMode};
 
 #[cfg(not(feature = "track_threads"))]
 assert_eq_size!(HybridMeta<LocalMode>, u64);
@@ -40,9 +40,6 @@ const MAX_SHARED_COUNT: u32 = u32::MAX >> 2;
 const LOCAL_PRESENT: u32 = (u32::MAX >> 1) + 1;
 // All bits set except top
 const CLEAR_LOCAL: u32 = u32::MAX >> 1;
-
-pub struct LocalMode;
-pub struct SharedMode;
 
 #[repr(C)]
 pub struct HybridMeta<MODE> {

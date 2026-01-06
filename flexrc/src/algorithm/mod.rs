@@ -8,6 +8,9 @@ use crate::FlexRcInner;
 pub use hybrid::*;
 pub use regular::*;
 
+pub struct LocalMode;
+pub struct SharedMode;
+
 pub trait Algorithm<META, META2> {
     /// Create and return new metadata    
     fn create() -> Self;
@@ -36,13 +39,13 @@ pub trait Algorithm<META, META2> {
 
 #[cfg(feature = "std")]
 #[inline]
-fn abort() {
+fn abort() -> ! {
     std::process::abort()
 }
 
 #[cfg(not(feature = "std"))]
 #[inline]
-fn abort() {
+fn abort() -> ! {
     // Abort not available on no_std
     panic!("Reference count overflow");
 }

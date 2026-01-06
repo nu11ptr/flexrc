@@ -12,8 +12,9 @@ edition = "2021"
 [features]
 default = ["std"]
 std = []
-track_threads = ["std"]
+small_counters = []
 str_deref = []
+track_threads = ["std"]
 
 [dependencies]
 static_assertions = "1"
