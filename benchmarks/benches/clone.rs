@@ -1,7 +1,8 @@
+use std::hint::black_box;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use flexrc::{LocalHybridRc, LocalRc, SharedHybridRc, SharedRc};
 
 const ITERATIONS: usize = 10_000;
@@ -10,7 +11,7 @@ macro_rules! clone {
     ($($name:expr, $setup:expr),+) => {
         fn clone(c: &mut Criterion) {
             let mut group = c.benchmark_group("Clone - Computed");
-            let lengths = vec![0usize, 10, 20, 100, 1000, 16384];
+            let lengths = vec![0usize, 100, 16384];
 
             for len in lengths {
                 $(let id = BenchmarkId::new($name, len);

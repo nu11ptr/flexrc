@@ -1,7 +1,8 @@
+use std::hint::black_box;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use flexrc::{LocalHybridRc, LocalRc, SharedHybridRc, SharedRc};
 
 const ITERATIONS: usize = 10_000;
@@ -11,7 +12,7 @@ macro_rules! create {
         fn create(c: &mut Criterion) {
             let mut group = c.benchmark_group("Create and Destroy - Computed");
 
-            let strings: Vec<String> = vec![0usize, 10, 20, 100, 1000, 16384]
+            let strings: Vec<String> = vec![0usize, 100, 16384]
                 .into_iter()
                 .map(|n| "x".repeat(n))
                 .collect();
