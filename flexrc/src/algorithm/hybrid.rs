@@ -1,9 +1,13 @@
 use core::cell::Cell;
 use core::marker::PhantomData;
-use core::sync::atomic;
-#[cfg(feature = "track_threads")]
+#[cfg(all(not(loom), feature = "track_threads"))]
 use core::sync::atomic::AtomicUsize;
-use core::sync::atomic::{AtomicU32, Ordering};
+#[cfg(not(loom))]
+use core::sync::atomic::{fence, AtomicU32, Ordering};
+#[cfg(all(loom, feature = "track_threads"))]
+use loom::sync::atomic::AtomicUsize;
+#[cfg(loom)]
+use loom::sync::atomic::{fence, AtomicU32, Ordering};
 
 use static_assertions::{assert_eq_align, assert_eq_size, assert_impl_all, assert_not_impl_any};
 
@@ -12,9 +16,10 @@ use crate::algorithm::abort;
 use crate::algorithm::hybrid_threads::THREAD_ID;
 use crate::{Algorithm, FlexRc, FlexRcInner, LocalMode, SharedMode};
 
-#[cfg(not(feature = "track_threads"))]
+// NOTE: It is not clear to me why, but with cfg(loom) the size jumps to 128-bits for both.
+#[cfg(all(not(loom), not(feature = "track_threads")))]
 assert_eq_size!(HybridMeta<LocalMode>, u64);
-#[cfg(not(feature = "track_threads"))]
+#[cfg(all(not(loom), not(feature = "track_threads")))]
 assert_eq_size!(HybridMeta<SharedMode>, u64);
 
 assert_eq_size!(HybridMeta<LocalMode>, HybridMeta<SharedMode>);
@@ -172,7 +177,7 @@ impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<Sha
         // If the value was 1 previously, that means LOCAL_PRESENT wasn't set which means this
         // is the last remaining counter
         if self.shared_count.fetch_sub(1, Ordering::Release) == 1 {
-            atomic::fence(Ordering::Acquire);
+            fence(Ordering::Acquire);
             true
         } else {
             false

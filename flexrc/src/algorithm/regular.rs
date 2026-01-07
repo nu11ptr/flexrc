@@ -2,12 +2,18 @@ use core::cell::Cell;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr;
-use core::sync::atomic;
-#[cfg(feature = "small_counters")]
+#[cfg(all(not(loom), feature = "small_counters"))]
 use core::sync::atomic::AtomicU32;
-#[cfg(not(feature = "small_counters"))]
+#[cfg(all(not(loom), not(feature = "small_counters")))]
 use core::sync::atomic::AtomicUsize;
-use core::sync::atomic::Ordering;
+#[cfg(not(loom))]
+use core::sync::atomic::{fence, Ordering};
+#[cfg(all(loom, feature = "small_counters"))]
+use loom::sync::atomic::AtomicU32;
+#[cfg(all(loom, not(feature = "small_counters")))]
+use loom::sync::atomic::AtomicUsize;
+#[cfg(loom)]
+use loom::sync::atomic::{fence, Ordering};
 
 use static_assertions::{assert_eq_align, assert_eq_size, assert_impl_all, assert_not_impl_any};
 
@@ -207,7 +213,7 @@ impl Algorithm<Meta<SharedMode>, Meta<LocalMode>> for Meta<SharedMode> {
     fn drop(&self) -> bool {
         // SAFETY: We are accessing the correct variant for this type and we know the layout.
         if unsafe { self.shared.fetch_sub(1, Ordering::Release) } == 1 {
-            atomic::fence(Ordering::Acquire);
+            fence(Ordering::Acquire);
             true
         } else {
             false

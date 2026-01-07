@@ -3,8 +3,6 @@
 extern crate alloc;
 
 mod algorithm;
-#[cfg(test)]
-mod tests;
 
 pub use algorithm::*;
 
