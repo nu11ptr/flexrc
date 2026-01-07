@@ -38,8 +38,8 @@ pub type SharedRc<T> = FlexRc<Meta<SharedMode>, Meta<LocalMode>, T>;
 
 // SAFETY: We ensure what we are holding is Sync/Send and we have been careful to ensure invariants
 // that allow these marked to be safe
-unsafe impl<T: Send + Sync> Send for SharedRc<T> {}
-unsafe impl<T: Send + Sync> Sync for SharedRc<T> {}
+unsafe impl<T: ?Sized + Send + Sync> Send for SharedRc<T> {}
+unsafe impl<T: ?Sized + Send + Sync> Sync for SharedRc<T> {}
 
 type LocalInner<T> = FlexRcInner<Meta<LocalMode>, Meta<SharedMode>, T>;
 type SharedInner<T> = FlexRcInner<Meta<SharedMode>, Meta<LocalMode>, T>;
@@ -66,28 +66,28 @@ pub union Meta<MODE> {
 
 impl Meta<LocalMode> {
     #[cfg(not(feature = "small_counters"))]
-    #[inline]
+    #[inline(always)]
     fn get_count(&self) -> usize {
         // SAFETY: We are accessing the correct variant for this type and we know the layout
         unsafe { self.local.get() }
     }
 
     #[cfg(feature = "small_counters")]
-    #[inline]
+    #[inline(always)]
     fn get_count(&self) -> u32 {
         // SAFETY: We are accessing the correct variant for this type and we know the layout
         unsafe { self.local.get() }
     }
 
     #[cfg(not(feature = "small_counters"))]
-    #[inline]
+    #[inline(always)]
     fn set_count(&self, count: usize) {
         // SAFETY: We are accessing the correct variant for this type and we know the layout
         unsafe { self.local.set(count) }
     }
 
     #[cfg(feature = "small_counters")]
-    #[inline]
+    #[inline(always)]
     fn set_count(&self, count: u32) {
         // SAFETY: We are accessing the correct variant for this type and we know the layout
         unsafe { self.local.set(count) }
@@ -111,7 +111,6 @@ impl Algorithm<Meta<LocalMode>, Meta<SharedMode>> for Meta<LocalMode> {
     fn clone(&self) {
         let old = self.get_count();
 
-        // TODO: This check adds 15-16% clone overhead - truly needed?
         if old == MAX_LOCAL_COUNT {
             abort();
         }

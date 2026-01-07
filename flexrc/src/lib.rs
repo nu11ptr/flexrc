@@ -24,7 +24,7 @@ use core::{mem, ptr};
 #[repr(C)]
 pub struct FlexRcInner<META, META2, T: ?Sized> {
     metadata: META,
-    phantom: PhantomData<META2>,
+    marker: PhantomData<META2>,
     data: T,
 }
 
@@ -36,7 +36,7 @@ where
     fn new(data: T) -> Self {
         Self {
             metadata: META::create(),
-            phantom: PhantomData,
+            marker: PhantomData,
             data,
         }
     }
@@ -62,7 +62,7 @@ where
     T: ?Sized,
 {
     ptr: NonNull<FlexRcInner<META, META2, T>>,
-    phantom: PhantomData<FlexRcInner<META, META2, T>>,
+    marker: PhantomData<FlexRcInner<META, META2, T>>,
 }
 
 impl<META, META2, T> FlexRc<META, META2, T>
@@ -229,7 +229,7 @@ where
     fn from_inner(inner: NonNull<FlexRcInner<META, META2, T>>) -> Self {
         Self {
             ptr: inner,
-            phantom: PhantomData,
+            marker: PhantomData,
         }
     }
 
