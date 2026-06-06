@@ -91,6 +91,10 @@ jobs:
           tool: cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
       - run: cargo llvm-cov -p flexrc --all-features --lcov --output-path lcov.info
+      - name: Import Codecov GPG key
+        run: |
+          gpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys 27034E7FDB850E0BBC2C62FF806BB28AED779869
+          gpg --batch --fingerprint 27034E7FDB850E0BBC2C62FF806BB28AED779869
       - uses: codecov/codecov-action@v6
         with:
           files: lcov.info
