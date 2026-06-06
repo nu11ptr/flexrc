@@ -1,9 +1,17 @@
 use core::cell::Cell;
 use core::marker::PhantomData;
+#[cfg(all(not(loom), feature = "small_counters"))]
+use core::sync::atomic::AtomicU32;
+#[cfg(all(not(loom), not(feature = "small_counters")))]
+use core::sync::atomic::AtomicUsize;
 #[cfg(not(loom))]
-use core::sync::atomic::{fence, AtomicU32, Ordering};
+use core::sync::atomic::{fence, Ordering};
+#[cfg(all(loom, feature = "small_counters"))]
+use loom::sync::atomic::AtomicU32;
+#[cfg(all(loom, not(feature = "small_counters")))]
+use loom::sync::atomic::AtomicUsize;
 #[cfg(loom)]
-use loom::sync::atomic::{fence, AtomicU32, Ordering};
+use loom::sync::atomic::{fence, Ordering};
 
 use static_assertions::{assert_eq_align, assert_eq_size, assert_impl_all, assert_not_impl_any};
 
@@ -11,10 +19,14 @@ use crate::algorithm::abort;
 use crate::{Algorithm, FlexRc, FlexRcInner, LocalMode, SharedMode};
 
 // NOTE: It is not clear to me why, but with cfg(loom) the size jumps to 128-bits for both.
-#[cfg(not(loom))]
+#[cfg(all(not(loom), feature = "small_counters"))]
 assert_eq_size!(HybridMeta<LocalMode>, u64);
-#[cfg(not(loom))]
+#[cfg(all(not(loom), feature = "small_counters"))]
 assert_eq_size!(HybridMeta<SharedMode>, u64);
+#[cfg(all(not(loom), not(feature = "small_counters")))]
+assert_eq_size!(HybridMeta<LocalMode>, [usize; 2]);
+#[cfg(all(not(loom), not(feature = "small_counters")))]
+assert_eq_size!(HybridMeta<SharedMode>, [usize; 2]);
 
 assert_eq_size!(HybridMeta<LocalMode>, HybridMeta<SharedMode>);
 assert_eq_align!(HybridMeta<LocalMode>, HybridMeta<SharedMode>);
@@ -26,21 +38,31 @@ assert_eq_align!(HybridRc<usize>, HybridArc<usize>);
 assert_impl_all!(HybridArc<usize>: Send, Sync);
 assert_not_impl_any!(HybridRc<usize>: Send, Sync);
 
-// Entire counter is usable for local
-pub(in crate::algorithm) const MAX_LOCAL_COUNT: u32 = u32::MAX;
+#[cfg(feature = "small_counters")]
+pub(in crate::algorithm) type Count = u32;
+#[cfg(not(feature = "small_counters"))]
+pub(in crate::algorithm) type Count = usize;
+
+#[cfg(feature = "small_counters")]
+pub(in crate::algorithm) type AtomicCount = AtomicU32;
+#[cfg(not(feature = "small_counters"))]
+pub(in crate::algorithm) type AtomicCount = AtomicUsize;
+
+// Entire counter is usable for local.
+pub(in crate::algorithm) const MAX_LOCAL_COUNT: Count = Count::MAX;
 // Save top bit for "local present" bit and second to top for overflow
-pub(in crate::algorithm) const SHARED_COUNT_MASK: u32 = u32::MAX >> 2;
-pub(in crate::algorithm) const MAX_SHARED_COUNT: u32 = SHARED_COUNT_MASK;
-pub(in crate::algorithm) const SHARED_OVERFLOW: u32 = SHARED_COUNT_MASK + 1;
+pub(in crate::algorithm) const SHARED_COUNT_MASK: Count = Count::MAX >> 2;
+pub(in crate::algorithm) const MAX_SHARED_COUNT: Count = SHARED_COUNT_MASK;
+pub(in crate::algorithm) const SHARED_OVERFLOW: Count = SHARED_COUNT_MASK + 1;
 // Top bit of shared counter signifies local present (or not)
-pub(in crate::algorithm) const LOCAL_PRESENT: u32 = (u32::MAX >> 1) + 1;
+pub(in crate::algorithm) const LOCAL_PRESENT: Count = (Count::MAX >> 1) + 1;
 // All bits set except top
-pub(in crate::algorithm) const CLEAR_LOCAL: u32 = u32::MAX >> 1;
+pub(in crate::algorithm) const CLEAR_LOCAL: Count = Count::MAX >> 1;
 
 #[repr(C)]
 pub struct HybridMeta<MODE> {
-    local_count: Cell<u32>,
-    shared_count: AtomicU32,
+    local_count: Cell<Count>,
+    shared_count: AtomicCount,
     phantom: PhantomData<MODE>,
 }
 
@@ -50,20 +72,20 @@ type LocalInner<T> = FlexRcInner<HybridMeta<LocalMode>, HybridMeta<SharedMode>, 
 type SharedInner<T> = FlexRcInner<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>;
 
 #[inline(always)]
-pub(in crate::algorithm) fn abort_on_shared_overflow(old: u32) {
+pub(in crate::algorithm) fn abort_on_shared_overflow(old: Count) {
     if old & SHARED_OVERFLOW != 0 || old & SHARED_COUNT_MASK == MAX_SHARED_COUNT {
         abort()
     }
 }
 
 #[inline(always)]
-pub(in crate::algorithm) fn retain_shared(shared_count: &AtomicU32) {
+pub(in crate::algorithm) fn retain_shared(shared_count: &AtomicCount) {
     let old = shared_count.fetch_add(1, Ordering::Relaxed);
     abort_on_shared_overflow(old);
 }
 
 #[inline(always)]
-pub(in crate::algorithm) fn release_shared(shared_count: &AtomicU32) -> bool {
+pub(in crate::algorithm) fn release_shared(shared_count: &AtomicCount) -> bool {
     // If the value was 1 previously, that means LOCAL_PRESENT wasn't set which means this
     // is the last remaining counter
     if shared_count.fetch_sub(1, Ordering::Release) == 1 {
@@ -75,7 +97,7 @@ pub(in crate::algorithm) fn release_shared(shared_count: &AtomicU32) -> bool {
 }
 
 #[inline(always)]
-pub(in crate::algorithm) fn retain_local(local_count: &Cell<u32>) {
+pub(in crate::algorithm) fn retain_local(local_count: &Cell<Count>) {
     let old = local_count.get();
 
     if old == MAX_LOCAL_COUNT {
@@ -87,8 +109,8 @@ pub(in crate::algorithm) fn retain_local(local_count: &Cell<u32>) {
 
 #[inline(always)]
 pub(in crate::algorithm) fn release_local(
-    local_count: &Cell<u32>,
-    shared_count: &AtomicU32,
+    local_count: &Cell<Count>,
+    shared_count: &AtomicCount,
 ) -> bool {
     let old = local_count.get();
 
@@ -129,7 +151,7 @@ impl Algorithm<HybridMeta<LocalMode>, HybridMeta<SharedMode>> for HybridMeta<Loc
     fn create() -> Self {
         Self {
             local_count: Cell::new(1),
-            shared_count: AtomicU32::new(LOCAL_PRESENT),
+            shared_count: AtomicCount::new(LOCAL_PRESENT),
             phantom: PhantomData,
         }
     }
@@ -220,7 +242,7 @@ impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<Sha
     fn create() -> Self {
         Self {
             local_count: Cell::new(0),
-            shared_count: AtomicU32::new(1),
+            shared_count: AtomicCount::new(1),
             phantom: PhantomData,
         }
     }

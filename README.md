@@ -19,18 +19,18 @@ The crate provides three families:
 
 Metadata size is the allocation header metadata. It does not include the pointed-to `T`, allocator padding, or the handle pointer itself.
 
-| Type                                   | Metadata size                       | Weak refs | Rc to Arc  | Rc into Arc                                        | Arc to Rc                                                                                    | Arc into Rc                                                                                  |
-| ---                                    | ---                                 | ---       | ---        | ---                                                | ---                                                                                          | ---                                                                                          |
-| `std::rc::Rc<T>` / `std::sync::Arc<T>` | 2 words                             | yes       | N/A        | N/A                                                | N/A                                                                                          | N/A                                                                                          |
-| `SmallRc<T>` / `SmallArc<T>`           | 1 word<br>`small_counters`: 4 bytes | no        | Clones `T` | **Unique**: In place<br>**Non-unique**: Clones `T` | Clones `T`                                                                                   | **Unique**: In place<br>**Non-unique**: Clones `T`                                           |
-| `HybridRc<T>` / `HybridArc<T>`         | 8 bytes                             | no        | In place   | In place                                           | **Rc count = 0**: In place<br>**Rc count &gt; 0**: Clones `T`                                | **Rc count = 0**: In place<br>**Rc count &gt; 0**: Clones `T`                                |
-| `ThreadRc<T>` / `ThreadArc<T>`         | 1 word + 8 bytes                    | no        | In place   | In place                                           | **Rc count = 0 OR same thread**: in place<br>**Rc count &gt; 0 OR other thread**: Clones `T` | **Rc count = 0 OR same thread**: in place<br>**Rc count &gt; 0 OR other thread**: Clones `T` |
+| Type                                   | Metadata size                                 | Weak refs | Rc to Arc  | Rc into Arc                                        | Arc to Rc                                                                                    | Arc into Rc                                                                                  |
+| ---                                    | ---                                           | ---       | ---        | ---                                                | ---                                                                                          | ---                                                                                          |
+| `std::rc::Rc<T>` / `std::sync::Arc<T>` | 2 words                                       | yes       | N/A        | N/A                                                | N/A                                                                                          | N/A                                                                                          |
+| `SmallRc<T>` / `SmallArc<T>`           | 1 word<br>`small_counters`: 4 bytes           | no        | Clones `T` | **Unique**: In place<br>**Non-unique**: Clones `T` | Clones `T`                                                                                   | **Unique**: In place<br>**Non-unique**: Clones `T`                                           |
+| `HybridRc<T>` / `HybridArc<T>`         | 2 words<br>`small_counters`: 8 bytes          | no        | In place   | In place                                           | **Rc count = 0**: In place<br>**Rc count &gt; 0**: Clones `T`                                | **Rc count = 0**: In place<br>**Rc count &gt; 0**: Clones `T`                                |
+| `ThreadRc<T>` / `ThreadArc<T>`         | 3 words<br>`small_counters`: 1 word + 8 bytes | no        | In place   | In place                                           | **Rc count = 0 OR same thread**: in place<br>**Rc count &gt; 0 OR other thread**: Clones `T` | **Rc count = 0 OR same thread**: in place<br>**Rc count &gt; 0 OR other thread**: Clones `T` |
 
 ## Features
 
 - `std` *(default)*: enables standard-library support and process abort on counter overflow.
 - `track_threads` *(default, implies `std`)*: enables `ThreadRc<T>` and `ThreadArc<T>` types.
-- `small_counters`: uses smaller counters for `SmallRc<T>` and `SmallArc<T>`.
+- `small_counters`: uses 32-bit counters for all crate types, regardless of target platform word size.
 - `str_deref`: lets `FlexRc<_, _, [u8]>` created from string data dereference as `str`.
 
 Disable default features for `no_std` plus `alloc` use:

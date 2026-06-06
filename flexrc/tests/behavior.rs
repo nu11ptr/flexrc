@@ -1,6 +1,7 @@
-use flexrc::{HybridArc, HybridRc, SmallArc, SmallRc};
+use flexrc::{HybridArc, HybridMeta, HybridRc, LocalMode, Meta, SharedMode, SmallArc, SmallRc};
 #[cfg(feature = "track_threads")]
-use flexrc::{ThreadArc, ThreadRc};
+use flexrc::{ThreadArc, ThreadHybridMeta, ThreadRc};
+use std::mem;
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -62,6 +63,40 @@ fn expect_err<T, E>(result: Result<T, E>, message: &str) -> E {
 fn assert_counts(counters: &Counters, clones: usize, drops: usize) {
     assert_eq!(counters.clones.load(Ordering::SeqCst), clones);
     assert_eq!(counters.drops.load(Ordering::SeqCst), drops);
+}
+
+#[test]
+fn metadata_sizes_match_active_counter_widths() {
+    #[cfg(any(not(feature = "small_counters"), feature = "track_threads"))]
+    let word = mem::size_of::<usize>();
+
+    #[cfg(not(feature = "small_counters"))]
+    {
+        assert_eq!(mem::size_of::<Meta<LocalMode>>(), word);
+        assert_eq!(mem::size_of::<Meta<SharedMode>>(), word);
+        assert_eq!(mem::size_of::<HybridMeta<LocalMode>>(), word * 2);
+        assert_eq!(mem::size_of::<HybridMeta<SharedMode>>(), word * 2);
+
+        #[cfg(feature = "track_threads")]
+        {
+            assert_eq!(mem::size_of::<ThreadHybridMeta<LocalMode>>(), word * 3);
+            assert_eq!(mem::size_of::<ThreadHybridMeta<SharedMode>>(), word * 3);
+        }
+    }
+
+    #[cfg(feature = "small_counters")]
+    {
+        assert_eq!(mem::size_of::<Meta<LocalMode>>(), 4);
+        assert_eq!(mem::size_of::<Meta<SharedMode>>(), 4);
+        assert_eq!(mem::size_of::<HybridMeta<LocalMode>>(), 8);
+        assert_eq!(mem::size_of::<HybridMeta<SharedMode>>(), 8);
+
+        #[cfg(feature = "track_threads")]
+        {
+            assert_eq!(mem::size_of::<ThreadHybridMeta<LocalMode>>(), word + 8);
+            assert_eq!(mem::size_of::<ThreadHybridMeta<SharedMode>>(), word + 8);
+        }
+    }
 }
 
 #[test]

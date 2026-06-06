@@ -3,16 +3,16 @@
 use core::cell::Cell;
 use core::marker::PhantomData;
 #[cfg(not(loom))]
-use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::sync::atomic::{AtomicUsize as GlobalAtomicUsize, Ordering as GlobalOrdering};
 #[cfg(loom)]
-use loom::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use loom::sync::atomic::{AtomicUsize, Ordering};
 
 use static_assertions::{assert_eq_align, assert_eq_size, assert_impl_all, assert_not_impl_any};
 
 use crate::algorithm::abort;
 use crate::algorithm::hybrid::{
-    release_local, release_shared, retain_local, retain_shared, LOCAL_PRESENT,
+    release_local, release_shared, retain_local, retain_shared, AtomicCount, Count, LOCAL_PRESENT,
 };
 use crate::{Algorithm, FlexRc, FlexRcInner, LocalMode, SharedMode};
 
@@ -57,8 +57,8 @@ fn current_thread_id() -> usize {
 #[repr(C)]
 pub struct ThreadHybridMeta<MODE> {
     thread_id: AtomicUsize,
-    local_count: Cell<u32>,
-    shared_count: AtomicU32,
+    local_count: Cell<Count>,
+    shared_count: AtomicCount,
     phantom: PhantomData<MODE>,
 }
 
@@ -74,6 +74,18 @@ assert_eq_size!(LocalInner<usize>, SharedInner<usize>);
 assert_eq_align!(LocalInner<usize>, SharedInner<usize>);
 assert_eq_size!(ThreadRc<usize>, ThreadArc<usize>);
 assert_eq_align!(ThreadRc<usize>, ThreadArc<usize>);
+#[cfg(all(not(loom), not(feature = "small_counters")))]
+assert_eq_size!(ThreadHybridMeta<LocalMode>, [usize; 3]);
+#[cfg(all(not(loom), not(feature = "small_counters")))]
+assert_eq_size!(ThreadHybridMeta<SharedMode>, [usize; 3]);
+#[cfg(all(not(loom), feature = "small_counters", target_pointer_width = "64"))]
+assert_eq_size!(ThreadHybridMeta<LocalMode>, [usize; 2]);
+#[cfg(all(not(loom), feature = "small_counters", target_pointer_width = "64"))]
+assert_eq_size!(ThreadHybridMeta<SharedMode>, [usize; 2]);
+#[cfg(all(not(loom), feature = "small_counters", target_pointer_width = "32"))]
+assert_eq_size!(ThreadHybridMeta<LocalMode>, [usize; 3]);
+#[cfg(all(not(loom), feature = "small_counters", target_pointer_width = "32"))]
+assert_eq_size!(ThreadHybridMeta<SharedMode>, [usize; 3]);
 
 assert_impl_all!(ThreadArc<usize>: Send, Sync);
 assert_not_impl_any!(ThreadRc<usize>: Send, Sync);
@@ -108,7 +120,7 @@ impl Algorithm<ThreadHybridMeta<LocalMode>, ThreadHybridMeta<SharedMode>>
         Self {
             thread_id: AtomicUsize::new(current_thread_id()),
             local_count: Cell::new(1),
-            shared_count: AtomicU32::new(LOCAL_PRESENT),
+            shared_count: AtomicCount::new(LOCAL_PRESENT),
             phantom: PhantomData,
         }
     }
@@ -212,7 +224,7 @@ impl Algorithm<ThreadHybridMeta<SharedMode>, ThreadHybridMeta<LocalMode>>
             // No thread ID set yet.
             thread_id: AtomicUsize::new(0),
             local_count: Cell::new(0),
-            shared_count: AtomicU32::new(1),
+            shared_count: AtomicCount::new(1),
             phantom: PhantomData,
         }
     }
