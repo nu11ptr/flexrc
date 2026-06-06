@@ -15,18 +15,16 @@ The crate provides three families:
 - `HybridRc<T>` / `HybridArc<T>`: hybrid reference counting. Local and shared handles can coexist for the same allocation.
 - `ThreadRc<T>` / `ThreadArc<T>`: thread-tracked hybrid reference counting. This adds same-thread recovery of local handles from shared handles when `track_threads` is enabled.
 
-The public API is safe; the crate uses internal unsafe code to manage allocation layout, metadata reinterpretation, and reference-count transitions. It has not yet undergone strenuous testing yet in real world code and should be evaluated carefully before considering it for production use.
-
 ## Type Comparison
 
-Metadata overhead is the allocation header metadata. It does not include the pointed-to `T`, allocator padding, or the handle pointer itself.
+Metadata size is the allocation header metadata. It does not include the pointed-to `T`, allocator padding, or the handle pointer itself.
 
-| Type                                      | Metadata overhead                                                     | Weak refs | Rc to Arc    | Rc into Arc                                        | Arc to Rc                                                                                    | Arc into Rc                                                                                      |
-| ---                                       | ---                                                                   | ---       | ---          | ---                                                | ---                                                                                          | ---                                                                                              |
-| `std::rc::Rc<T>` / `std::sync::Arc<T>`    | 2 words (32-bits: 8 bytes, 64-bit: 16 bytes)                          | yes       | N/A          | N/A                                                | N/A                                                                                          | N/A                                                                                              |
-| `SmallRc<T>` / `SmallArc<T>`              | 1 word (32-bits: 4 bytes, 64-bit: 8 bytes), `small_counters`: 4 bytes | no        | Clones `T`   | **Unique**: In place<br>**Non-unique**: Clones `T` | Clones `T`                                                                                   | **Unique**: In place<br>**Non-unique**: Clones `T`                                               |
-| `HybridRc<T>` / `HybridArc<T>`            | 8 bytes                                                               | no        | In place     | In place                                           | **Rc count = 0**: In place<br>**Rc count &gt; 0**: Clones `T`                                | **Rc count = 0**: In place<br>**Rc count &gt; 0**: Clones `T`                                    |
-| `ThreadRc<T>` / `ThreadArc<T>`            | 1 word (32-bits: 4 bytes, 64-bit: 8 bytes) + 8 bytes                  | no        | In place     | In place                                           | **Rc count = 0 OR same thread**: in place<br>**Rc count &gt; 0 OR other thread**: Clones `T` | **Rc count = 0 OR same thread**: in place<br>**Rc count &gt; 0 OR other thread**: Clones `T`     |
+| Type                                   | Metadata size                       | Weak refs | Rc to Arc  | Rc into Arc                                        | Arc to Rc                                                                                    | Arc into Rc                                                                                  |
+| ---                                    | ---                                 | ---       | ---        | ---                                                | ---                                                                                          | ---                                                                                          |
+| `std::rc::Rc<T>` / `std::sync::Arc<T>` | 2 words                             | yes       | N/A        | N/A                                                | N/A                                                                                          | N/A                                                                                          |
+| `SmallRc<T>` / `SmallArc<T>`           | 1 word<br>`small_counters`: 4 bytes | no        | Clones `T` | **Unique**: In place<br>**Non-unique**: Clones `T` | Clones `T`                                                                                   | **Unique**: In place<br>**Non-unique**: Clones `T`                                           |
+| `HybridRc<T>` / `HybridArc<T>`         | 8 bytes                             | no        | In place   | In place                                           | **Rc count = 0**: In place<br>**Rc count &gt; 0**: Clones `T`                                | **Rc count = 0**: In place<br>**Rc count &gt; 0**: Clones `T`                                |
+| `ThreadRc<T>` / `ThreadArc<T>`         | 1 word + 8 bytes                    | no        | In place   | In place                                           | **Rc count = 0 OR same thread**: in place<br>**Rc count &gt; 0 OR other thread**: Clones `T` | **Rc count = 0 OR same thread**: in place<br>**Rc count &gt; 0 OR other thread**: Clones `T` |
 
 ## Features
 
@@ -46,6 +44,23 @@ Use `std` without the thread-tracked family:
 ```toml
 flexrc = { version = "0.1", default-features = false, features = ["std"] }
 ```
+
+## Performance / Benchmarks
+
+The `Rc` and `Arc` types are essentially the same performance as equivalent stdlib types, close enough in benchmarks that they are completely interchangable without performance concerns. Like the stdlib types, the `Rc` types have roughly 2x the clone performance of the `Arc` types.
+
+Conversions between types range from blisteringly fast (`Rc` into `Arc` for Hybrid/Thread types) to fast (about the same as an `Rc`/`Arc` `.clone()`). Full performance details for your platform can be found by running the benchmarks below.
+
+You can run the benchmarks on your system like this:
+
+```bash
+cd benchmarks
+cargo bench
+```
+
+## Safety
+
+The public API is safe; the crate uses internal unsafe code to manage allocation layout, metadata reinterpretation, and reference-count transitions. It has not yet undergone strenuous testing yet in real world code and should be evaluated carefully before considering it for production use.
 
 ## Testing
 
