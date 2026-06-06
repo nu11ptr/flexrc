@@ -3,6 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/flexrc.svg)](https://crates.io/crates/flexrc)
 [![Documentation](https://docs.rs/flexrc/badge.svg)](https://docs.rs/flexrc)
 [![CI](https://github.com/nu11ptr/flexrc/actions/workflows/ci.yml/badge.svg)](https://github.com/nu11ptr/flexrc/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/nu11ptr/flexrc/branch/master/graph/badge.svg)](https://codecov.io/gh/nu11ptr/flexrc)
 [![License](https://img.shields.io/crates/l/flexrc.svg)](#license)
 
 `flexrc` is a crate that provides alternate `Rc`/`Arc`-style types. Its main purpose is to allow cheap, in place conversions between `Rc` and `Arc` types, when possible. This allows using cheap non-atomic counter clones in single threaded situations, but falling backing to atomic counted clones when necessary. It achieves this by using the same memory layout for both `Rc` and `Arc` types with the hybrid and thread tracking types holding both atomic and non-atomic counters simultaneously. Additionally, the thread types also track the current thread allowing for further in place conversion opportunties.
