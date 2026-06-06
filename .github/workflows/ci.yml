@@ -3,6 +3,9 @@ name: CI
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -102,6 +105,105 @@ jobs:
           name: flexrc
           fail_ci_if_error: true
           use_oidc: true
+
+  stress:
+    name: Native Stress (${{ matrix.platform.name }})
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux-amd64
+            runner: ubuntu-24.04
+            cargo: cargo
+            target_args: ""
+          - name: linux-arm32
+            runner: ubuntu-24.04
+            cargo: cross
+            target_args: --target armv7-unknown-linux-gnueabihf
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            cargo: cargo
+            target_args: ""
+          - name: macos-arm64
+            runner: macos-15
+            cargo: cargo
+            target_args: ""
+          - name: windows-amd64
+            runner: windows-2025
+            cargo: cargo
+            target_args: ""
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        if: matrix.platform.cargo == 'cross'
+        with:
+          tool: cross
+      - uses: Swatinem/rust-cache@v2
+      - run: ${{ matrix.platform.cargo }} test ${{ matrix.platform.target_args }} -p flexrc --test stress --all-features
+        shell: bash
+        env:
+          FLEXRC_STRESS_ITERS: 128
+          FLEXRC_STRESS_THREADS: 4
+          FLEXRC_STRESS_OPS: 128
+
+  long-stress:
+    name: Long Stress
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo nextest run -p flexrc --release --test stress --all-features --stress-count 10
+        env:
+          FLEXRC_STRESS_ITERS: 256
+          FLEXRC_STRESS_THREADS: 8
+          FLEXRC_STRESS_OPS: 256
+
+  thread-sanitizer:
+    name: ThreadSanitizer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu -p flexrc --test stress --all-features
+        env:
+          RUSTFLAGS: -Zsanitizer=thread
+          RUSTDOCFLAGS: -Zsanitizer=thread
+          TSAN_OPTIONS: halt_on_error=1
+          FLEXRC_STRESS_ITERS: 64
+          FLEXRC_STRESS_THREADS: 4
+          FLEXRC_STRESS_OPS: 64
+
+  address-sanitizer:
+    name: AddressSanitizer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu -p flexrc --all-features
+        env:
+          RUSTFLAGS: -Zsanitizer=address
+          RUSTDOCFLAGS: -Zsanitizer=address
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          FLEXRC_STRESS_ITERS: 64
+          FLEXRC_STRESS_THREADS: 4
+          FLEXRC_STRESS_OPS: 64
 
   loom:
     name: Loom

@@ -64,7 +64,13 @@ The public API is safe; the crate uses internal unsafe code to manage allocation
 
 ## Testing
 
-The crate is tested using a typical Rust test suite, loom tests for concurrent reference-count transitions, and Miri with strict provenance flags.
+The crate is tested using a typical Rust test suite, native thread stress tests, loom tests for concurrent reference-count transitions, sanitizer jobs, and Miri with strict provenance flags.
+
+The native stress tests run in CI and can be scaled locally with:
+
+```sh
+FLEXRC_STRESS_ITERS=256 FLEXRC_STRESS_THREADS=8 FLEXRC_STRESS_OPS=256 cargo test -p flexrc --test stress --all-features
+```
 
 To run the loom tests locally:
 
