@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use flexrc::{LocalHybridRc, LocalRc, LocalThreadRc, SharedHybridRc, SharedRc, SharedThreadRc};
+use flexrc::{HybridRc, SmallRc, ThreadRc, HybridArc, SmallArc, ThreadArc};
 
 const ITERATIONS: usize = 10_000;
 
@@ -39,18 +39,18 @@ create!(
     |s: &str| <Rc<str>>::from(s),
     "Arc<str>",
     |s: &str| <Arc<str>>::from(s),
-    "LocalRc",
-    |s: &str| LocalRc::from_str_ref(s),
-    "SharedRc",
-    |s: &str| SharedRc::from_str_ref(s),
-    "LocalHybridRc",
-    |s: &str| LocalHybridRc::from_str_ref(s),
-    "SharedHybridRc",
-    |s: &str| SharedHybridRc::from_str_ref(s),
-    "LocalThreadRc",
-    |s: &str| LocalThreadRc::from_str_ref(s),
-    "SharedThreadRc",
-    |s: &str| SharedThreadRc::from_str_ref(s)
+    "SmallRc",
+    |s: &str| SmallRc::from_str_ref(s),
+    "SmallArc",
+    |s: &str| SmallArc::from_str_ref(s),
+    "HybridRc",
+    |s: &str| HybridRc::from_str_ref(s),
+    "HybridArc",
+    |s: &str| HybridArc::from_str_ref(s),
+    "ThreadRc",
+    |s: &str| ThreadRc::from_str_ref(s),
+    "ThreadArc",
+    |s: &str| ThreadArc::from_str_ref(s)
 );
 
 criterion_group!(benches, create);

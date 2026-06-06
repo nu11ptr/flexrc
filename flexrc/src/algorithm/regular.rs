@@ -24,11 +24,11 @@ assert_eq_size!(Meta<LocalMode>, Meta<SharedMode>);
 assert_eq_align!(Meta<LocalMode>, Meta<SharedMode>);
 assert_eq_size!(LocalInner<usize>, SharedInner<usize>);
 assert_eq_align!(LocalInner<usize>, SharedInner<usize>);
-assert_eq_size!(LocalRc<usize>, SharedRc<usize>);
-assert_eq_align!(LocalRc<usize>, SharedRc<usize>);
+assert_eq_size!(SmallRc<usize>, SmallArc<usize>);
+assert_eq_align!(SmallRc<usize>, SmallArc<usize>);
 
-assert_impl_all!(SharedRc<usize>: Send, Sync);
-assert_not_impl_any!(LocalRc<usize>: Send, Sync);
+assert_impl_all!(SmallArc<usize>: Send, Sync);
+assert_not_impl_any!(SmallRc<usize>: Send, Sync);
 
 #[cfg(not(feature = "small_counters"))]
 const MAX_LOCAL_COUNT: usize = usize::MAX;
@@ -39,13 +39,13 @@ const MAX_LOCAL_COUNT: u32 = u32::MAX;
 #[cfg(feature = "small_counters")]
 const MAX_SHARED_COUNT: u32 = u32::MAX >> 1;
 
-pub type LocalRc<T> = FlexRc<Meta<LocalMode>, Meta<SharedMode>, T>;
-pub type SharedRc<T> = FlexRc<Meta<SharedMode>, Meta<LocalMode>, T>;
+pub type SmallRc<T> = FlexRc<Meta<LocalMode>, Meta<SharedMode>, T>;
+pub type SmallArc<T> = FlexRc<Meta<SharedMode>, Meta<LocalMode>, T>;
 
 // SAFETY: We ensure what we are holding is Sync/Send and we have been careful to ensure invariants
 // that allow these marked to be safe
-unsafe impl<T: ?Sized + Send + Sync> Send for SharedRc<T> {}
-unsafe impl<T: ?Sized + Send + Sync> Sync for SharedRc<T> {}
+unsafe impl<T: ?Sized + Send + Sync> Send for SmallArc<T> {}
+unsafe impl<T: ?Sized + Send + Sync> Sync for SmallArc<T> {}
 
 type LocalInner<T> = FlexRcInner<Meta<LocalMode>, Meta<SharedMode>, T>;
 type SharedInner<T> = FlexRcInner<Meta<SharedMode>, Meta<LocalMode>, T>;

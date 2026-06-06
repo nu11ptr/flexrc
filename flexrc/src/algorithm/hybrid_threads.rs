@@ -62,8 +62,8 @@ pub struct ThreadHybridMeta<MODE> {
     phantom: PhantomData<MODE>,
 }
 
-pub type LocalThreadRc<T> = FlexRc<ThreadHybridMeta<LocalMode>, ThreadHybridMeta<SharedMode>, T>;
-pub type SharedThreadRc<T> = FlexRc<ThreadHybridMeta<SharedMode>, ThreadHybridMeta<LocalMode>, T>;
+pub type ThreadRc<T> = FlexRc<ThreadHybridMeta<LocalMode>, ThreadHybridMeta<SharedMode>, T>;
+pub type ThreadArc<T> = FlexRc<ThreadHybridMeta<SharedMode>, ThreadHybridMeta<LocalMode>, T>;
 
 type LocalInner<T> = FlexRcInner<ThreadHybridMeta<LocalMode>, ThreadHybridMeta<SharedMode>, T>;
 type SharedInner<T> = FlexRcInner<ThreadHybridMeta<SharedMode>, ThreadHybridMeta<LocalMode>, T>;
@@ -72,16 +72,16 @@ assert_eq_size!(ThreadHybridMeta<LocalMode>, ThreadHybridMeta<SharedMode>);
 assert_eq_align!(ThreadHybridMeta<LocalMode>, ThreadHybridMeta<SharedMode>);
 assert_eq_size!(LocalInner<usize>, SharedInner<usize>);
 assert_eq_align!(LocalInner<usize>, SharedInner<usize>);
-assert_eq_size!(LocalThreadRc<usize>, SharedThreadRc<usize>);
-assert_eq_align!(LocalThreadRc<usize>, SharedThreadRc<usize>);
+assert_eq_size!(ThreadRc<usize>, ThreadArc<usize>);
+assert_eq_align!(ThreadRc<usize>, ThreadArc<usize>);
 
-assert_impl_all!(SharedThreadRc<usize>: Send, Sync);
-assert_not_impl_any!(LocalThreadRc<usize>: Send, Sync);
+assert_impl_all!(ThreadArc<usize>: Send, Sync);
+assert_not_impl_any!(ThreadRc<usize>: Send, Sync);
 
 // SAFETY: We ensure what we are holding is Sync/Send and we have been careful to ensure invariants
 // that allow these marked to be safe
-unsafe impl<T: ?Sized + Send + Sync> Send for SharedThreadRc<T> {}
-unsafe impl<T: ?Sized + Send + Sync> Sync for SharedThreadRc<T> {}
+unsafe impl<T: ?Sized + Send + Sync> Send for ThreadArc<T> {}
+unsafe impl<T: ?Sized + Send + Sync> Sync for ThreadArc<T> {}
 
 impl ThreadHybridMeta<LocalMode> {
     #[inline(always)]

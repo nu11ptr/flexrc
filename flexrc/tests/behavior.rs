@@ -1,6 +1,6 @@
-use flexrc::{LocalHybridRc, LocalRc, SharedHybridRc, SharedRc};
+use flexrc::{HybridArc, HybridRc, SmallArc, SmallRc};
 #[cfg(feature = "track_threads")]
-use flexrc::{LocalThreadRc, SharedThreadRc};
+use flexrc::{ThreadArc, ThreadRc};
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -67,12 +67,12 @@ fn assert_counts(counters: &Counters, clones: usize, drops: usize) {
 #[test]
 fn regular_local_into_shared_transfers_unique_allocation() {
     let (value, counters) = tracked(7);
-    let local: LocalRc<Tracked> = LocalRc::new(value);
+    let local: SmallRc<Tracked> = SmallRc::new(value);
     let original_data = &*local as *const Tracked;
 
-    let shared: SharedRc<Tracked> = expect_ok(
+    let shared: SmallArc<Tracked> = expect_ok(
         local.try_into_other(),
-        "unique LocalRc should promote to SharedRc",
+        "unique SmallRc should promote to SmallArc",
     );
 
     assert_eq!(shared.value, 7);
@@ -86,12 +86,12 @@ fn regular_local_into_shared_transfers_unique_allocation() {
 #[test]
 fn regular_shared_into_local_transfers_unique_allocation() {
     let (value, counters) = tracked(11);
-    let shared: SharedRc<Tracked> = SharedRc::new(value);
+    let shared: SmallArc<Tracked> = SmallArc::new(value);
     let original_data = &*shared as *const Tracked;
 
-    let local: LocalRc<Tracked> = expect_ok(
+    let local: SmallRc<Tracked> = expect_ok(
         shared.try_into_other(),
-        "unique SharedRc should demote to LocalRc",
+        "unique SmallArc should demote to SmallRc",
     );
 
     assert_eq!(local.value, 11);
@@ -105,12 +105,12 @@ fn regular_shared_into_local_transfers_unique_allocation() {
 #[test]
 fn regular_consuming_conversion_fails_when_not_unique() {
     let (value, counters) = tracked(13);
-    let local: LocalRc<Tracked> = LocalRc::new(value);
+    let local: SmallRc<Tracked> = SmallRc::new(value);
     let local_clone = local.clone();
 
     let local = expect_err(
         local.try_into_other(),
-        "cloned LocalRc should not promote in place",
+        "cloned SmallRc should not promote in place",
     );
 
     drop(local);
@@ -119,12 +119,12 @@ fn regular_consuming_conversion_fails_when_not_unique() {
     assert_counts(&counters, 0, 1);
 
     let (value, counters) = tracked(17);
-    let shared: SharedRc<Tracked> = SharedRc::new(value);
+    let shared: SmallArc<Tracked> = SmallArc::new(value);
     let shared_clone = shared.clone();
 
     let shared = expect_err(
         shared.try_into_other(),
-        "cloned SharedRc should not demote in place",
+        "cloned SmallArc should not demote in place",
     );
 
     drop(shared);
@@ -136,11 +136,11 @@ fn regular_consuming_conversion_fails_when_not_unique() {
 #[test]
 fn regular_into_other_clones_data_when_in_place_conversion_fails() {
     let (value, counters) = tracked(19);
-    let local: LocalRc<Tracked> = LocalRc::new(value);
+    let local: SmallRc<Tracked> = SmallRc::new(value);
     let original_data = &*local as *const Tracked;
     let local_clone = local.clone();
 
-    let shared: SharedRc<Tracked> = local.into_other();
+    let shared: SmallArc<Tracked> = local.into_other();
 
     assert_eq!(shared.value, 19);
     assert!(!ptr::addr_eq(&*shared as *const Tracked, original_data));
@@ -155,13 +155,11 @@ fn regular_into_other_clones_data_when_in_place_conversion_fails() {
 #[test]
 fn hybrid_local_to_shared_retains_and_transfers_counts() {
     let (value, counters) = tracked(23);
-    let local: LocalHybridRc<Tracked> = LocalHybridRc::new(value);
+    let local: HybridRc<Tracked> = HybridRc::new(value);
     let original_data = &*local as *const Tracked;
 
-    let shared: SharedHybridRc<Tracked> = expect_ok(
-        local.try_to_other(),
-        "LocalHybridRc should retain a SharedHybridRc",
-    );
+    let shared: HybridArc<Tracked> =
+        expect_ok(local.try_to_other(), "HybridRc should retain a HybridArc");
 
     assert!(ptr::addr_eq(&*shared as *const Tracked, original_data));
 
@@ -175,11 +173,11 @@ fn hybrid_local_to_shared_retains_and_transfers_counts() {
     assert_counts(&counters, 0, 1);
 
     let (value, counters) = tracked(29);
-    let local: LocalHybridRc<Tracked> = LocalHybridRc::new(value);
+    let local: HybridRc<Tracked> = HybridRc::new(value);
     let local_clone = local.clone();
-    let shared: SharedHybridRc<Tracked> = expect_ok(
+    let shared: HybridArc<Tracked> = expect_ok(
         local.try_into_other(),
-        "LocalHybridRc should transfer into SharedHybridRc",
+        "HybridRc should transfer into HybridArc",
     );
 
     drop(shared);
@@ -191,12 +189,12 @@ fn hybrid_local_to_shared_retains_and_transfers_counts() {
 #[test]
 fn hybrid_shared_to_local_retains_and_transfers_counts() {
     let (value, counters) = tracked(31);
-    let shared: SharedHybridRc<Tracked> = SharedHybridRc::new(value);
+    let shared: HybridArc<Tracked> = HybridArc::new(value);
     let original_data = &*shared as *const Tracked;
 
-    let local: LocalHybridRc<Tracked> = expect_ok(
+    let local: HybridRc<Tracked> = expect_ok(
         shared.try_to_other(),
-        "SharedHybridRc should retain a LocalHybridRc when no local exists",
+        "HybridArc should retain a HybridRc when no local exists",
     );
 
     assert!(ptr::addr_eq(&*local as *const Tracked, original_data));
@@ -210,11 +208,11 @@ fn hybrid_shared_to_local_retains_and_transfers_counts() {
     assert_counts(&counters, 0, 1);
 
     let (value, counters) = tracked(37);
-    let shared: SharedHybridRc<Tracked> = SharedHybridRc::new(value);
+    let shared: HybridArc<Tracked> = HybridArc::new(value);
     let shared_clone = shared.clone();
-    let local: LocalHybridRc<Tracked> = expect_ok(
+    let local: HybridRc<Tracked> = expect_ok(
         shared.try_into_other(),
-        "SharedHybridRc should transfer into LocalHybridRc when no local exists",
+        "HybridArc should transfer into HybridRc when no local exists",
     );
 
     drop(local);
@@ -226,11 +224,9 @@ fn hybrid_shared_to_local_retains_and_transfers_counts() {
 #[test]
 fn hybrid_shared_to_local_fails_when_local_is_already_present() {
     let (value, counters) = tracked(39);
-    let local: LocalHybridRc<Tracked> = LocalHybridRc::new(value);
-    let shared: SharedHybridRc<Tracked> = expect_ok(
-        local.try_to_other(),
-        "LocalHybridRc should retain a SharedHybridRc",
-    );
+    let local: HybridRc<Tracked> = HybridRc::new(value);
+    let shared: HybridArc<Tracked> =
+        expect_ok(local.try_to_other(), "HybridRc should retain a HybridArc");
 
     assert!(shared.try_to_other().is_err());
 
@@ -244,16 +240,14 @@ fn hybrid_shared_to_local_fails_when_local_is_already_present() {
 #[test]
 fn thread_hybrid_shared_to_local_recovers_on_same_thread() {
     let (value, counters) = tracked(40);
-    let local: LocalThreadRc<Tracked> = LocalThreadRc::new(value);
+    let local: ThreadRc<Tracked> = ThreadRc::new(value);
     let original_data = &*local as *const Tracked;
-    let shared: SharedThreadRc<Tracked> = expect_ok(
-        local.try_to_other(),
-        "LocalThreadRc should retain a SharedThreadRc",
-    );
+    let shared: ThreadArc<Tracked> =
+        expect_ok(local.try_to_other(), "ThreadRc should retain a ThreadArc");
 
-    let recovered: LocalThreadRc<Tracked> = expect_ok(
+    let recovered: ThreadRc<Tracked> = expect_ok(
         shared.try_to_other(),
-        "SharedThreadRc should recover a local handle on the tracked thread",
+        "ThreadArc should recover a local handle on the tracked thread",
     );
 
     assert!(ptr::addr_eq(&*recovered as *const Tracked, original_data));
@@ -266,15 +260,13 @@ fn thread_hybrid_shared_to_local_recovers_on_same_thread() {
     assert_counts(&counters, 0, 1);
 
     let (value, counters) = tracked(42);
-    let local: LocalThreadRc<Tracked> = LocalThreadRc::new(value);
-    let shared: SharedThreadRc<Tracked> = expect_ok(
-        local.try_to_other(),
-        "LocalThreadRc should retain a SharedThreadRc",
-    );
+    let local: ThreadRc<Tracked> = ThreadRc::new(value);
+    let shared: ThreadArc<Tracked> =
+        expect_ok(local.try_to_other(), "ThreadRc should retain a ThreadArc");
     let shared_clone = shared.clone();
-    let recovered: LocalThreadRc<Tracked> = expect_ok(
+    let recovered: ThreadRc<Tracked> = expect_ok(
         shared.try_into_other(),
-        "SharedThreadRc should transfer to local on the tracked thread",
+        "ThreadArc should transfer to local on the tracked thread",
     );
 
     drop(local);
@@ -289,16 +281,14 @@ fn thread_hybrid_shared_to_local_recovers_on_same_thread() {
 #[test]
 fn thread_hybrid_shared_to_local_rejects_other_threads() {
     let (value, counters) = tracked(44);
-    let local: LocalThreadRc<Tracked> = LocalThreadRc::new(value);
-    let shared: SharedThreadRc<Tracked> = expect_ok(
-        local.try_to_other(),
-        "LocalThreadRc should retain a SharedThreadRc",
-    );
+    let local: ThreadRc<Tracked> = ThreadRc::new(value);
+    let shared: ThreadArc<Tracked> =
+        expect_ok(local.try_to_other(), "ThreadRc should retain a ThreadArc");
 
     let shared = thread::spawn(move || {
         let shared = expect_err(
             shared.try_into_other(),
-            "SharedThreadRc should not transfer to local on another thread",
+            "ThreadArc should not transfer to local on another thread",
         );
         assert!(shared.try_to_other().is_err());
         shared
@@ -315,7 +305,7 @@ fn thread_hybrid_shared_to_local_rejects_other_threads() {
 #[test]
 fn get_mut_only_succeeds_for_unique_owners() {
     let (value, _counters) = tracked(41);
-    let mut local: LocalRc<Tracked> = LocalRc::new(value);
+    let mut local: SmallRc<Tracked> = SmallRc::new(value);
     assert_eq!(local.get_mut().expect("unique local").value, 41);
     let local_clone = local.clone();
     assert!(local.get_mut().is_none());
@@ -324,7 +314,7 @@ fn get_mut_only_succeeds_for_unique_owners() {
     assert_eq!(local.value, 43);
 
     let (value, _counters) = tracked(47);
-    let mut shared: SharedRc<Tracked> = SharedRc::new(value);
+    let mut shared: SmallArc<Tracked> = SmallArc::new(value);
     assert_eq!(shared.get_mut().expect("unique shared").value, 47);
     let shared_clone = shared.clone();
     assert!(shared.get_mut().is_none());
@@ -333,12 +323,10 @@ fn get_mut_only_succeeds_for_unique_owners() {
     assert_eq!(shared.value, 53);
 
     let (value, _counters) = tracked(59);
-    let mut hybrid: LocalHybridRc<Tracked> = LocalHybridRc::new(value);
+    let mut hybrid: HybridRc<Tracked> = HybridRc::new(value);
     assert_eq!(hybrid.get_mut().expect("unique hybrid local").value, 59);
-    let shared: SharedHybridRc<Tracked> = expect_ok(
-        hybrid.try_to_other(),
-        "LocalHybridRc should retain a SharedHybridRc",
-    );
+    let shared: HybridArc<Tracked> =
+        expect_ok(hybrid.try_to_other(), "HybridRc should retain a HybridArc");
     assert!(hybrid.get_mut().is_none());
     drop(shared);
     hybrid.get_mut().expect("hybrid local unique again").value = 61;
@@ -347,7 +335,7 @@ fn get_mut_only_succeeds_for_unique_owners() {
     #[cfg(feature = "track_threads")]
     {
         let (value, _counters) = tracked(63);
-        let mut tracked_hybrid: LocalThreadRc<Tracked> = LocalThreadRc::new(value);
+        let mut tracked_hybrid: ThreadRc<Tracked> = ThreadRc::new(value);
         assert_eq!(
             tracked_hybrid
                 .get_mut()
@@ -355,9 +343,9 @@ fn get_mut_only_succeeds_for_unique_owners() {
                 .value,
             63
         );
-        let shared: SharedThreadRc<Tracked> = expect_ok(
+        let shared: ThreadArc<Tracked> = expect_ok(
             tracked_hybrid.try_to_other(),
-            "LocalThreadRc should retain a SharedThreadRc",
+            "ThreadRc should retain a ThreadArc",
         );
         assert!(tracked_hybrid.get_mut().is_none());
         drop(shared);
@@ -372,7 +360,7 @@ fn get_mut_only_succeeds_for_unique_owners() {
 #[test]
 fn shared_handles_clone_and_drop_across_threads() {
     let (value, counters) = tracked(67);
-    let shared: SharedRc<Tracked> = SharedRc::new(value);
+    let shared: SmallArc<Tracked> = SmallArc::new(value);
     let thread_shared = shared.clone();
 
     thread::spawn(move || {
@@ -388,7 +376,7 @@ fn shared_handles_clone_and_drop_across_threads() {
     assert_counts(&counters, 0, 1);
 
     let (value, counters) = tracked(71);
-    let shared: SharedHybridRc<Tracked> = SharedHybridRc::new(value);
+    let shared: HybridArc<Tracked> = HybridArc::new(value);
     let thread_shared = shared.clone();
 
     thread::spawn(move || {
@@ -406,7 +394,7 @@ fn shared_handles_clone_and_drop_across_threads() {
     #[cfg(feature = "track_threads")]
     {
         let (value, counters) = tracked(73);
-        let shared: SharedThreadRc<Tracked> = SharedThreadRc::new(value);
+        let shared: ThreadArc<Tracked> = ThreadArc::new(value);
         let thread_shared = shared.clone();
 
         thread::spawn(move || {
@@ -426,10 +414,10 @@ fn shared_handles_clone_and_drop_across_threads() {
 #[cfg(not(feature = "str_deref"))]
 #[test]
 fn byte_slice_round_trips_through_regular_promotion() {
-    let local: LocalRc<[u8]> = LocalRc::from_slice(b"flex");
+    let local: SmallRc<[u8]> = SmallRc::from_slice(b"flex");
     assert_eq!(&*local, b"flex");
 
-    let shared: SharedRc<[u8]> = expect_ok(
+    let shared: SmallArc<[u8]> = expect_ok(
         local.try_into_other(),
         "unique byte slice should promote without copying",
     );
@@ -439,10 +427,10 @@ fn byte_slice_round_trips_through_regular_promotion() {
 #[cfg(feature = "str_deref")]
 #[test]
 fn str_deref_round_trips_through_regular_promotion() {
-    let local: LocalRc<[u8]> = LocalRc::from_str_ref("flex");
+    let local: SmallRc<[u8]> = SmallRc::from_str_ref("flex");
     assert_eq!(&*local, "flex");
 
-    let shared: SharedRc<[u8]> = expect_ok(
+    let shared: SmallArc<[u8]> = expect_ok(
         local.try_into_other(),
         "unique string bytes should promote without copying",
     );

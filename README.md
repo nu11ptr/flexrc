@@ -11,9 +11,9 @@ It was inspired by the [hybrid-rc](https://crates.io/crates/hybrid-rc) crate and
 
 The crate provides three families:
 
-- `LocalRc<T>` / `SharedRc<T>`: regular local or shared reference counting. In-place conversion only succeeds when the allocation is unique.
-- `LocalHybridRc<T>` / `SharedHybridRc<T>`: hybrid reference counting. Local and shared handles can coexist for the same allocation.
-- `LocalThreadRc<T>` / `SharedThreadRc<T>`: thread-tracked hybrid reference counting. This adds same-thread recovery of local handles from shared handles when `track_threads` is enabled.
+- `SmallRc<T>` / `SmallArc<T>`: regular local or shared reference counting. In-place conversion only succeeds when the allocation is unique.
+- `HybridRc<T>` / `HybridArc<T>`: hybrid reference counting. Local and shared handles can coexist for the same allocation.
+- `ThreadRc<T>` / `ThreadArc<T>`: thread-tracked hybrid reference counting. This adds same-thread recovery of local handles from shared handles when `track_threads` is enabled.
 
 The public API is safe; the crate uses internal unsafe code to manage allocation layout, metadata reinterpretation, and reference-count transitions. It has not yet undergone strenuous testing yet in real world code and should be evaluated carefully before considering it for production use.
 
@@ -21,18 +21,18 @@ The public API is safe; the crate uses internal unsafe code to manage allocation
 
 Metadata overhead is the allocation header metadata. It does not include the pointed-to `T`, allocator padding, or the handle pointer itself.
 
-| Type                                      | Metadata overhead                                                     | Weak refs | Rc to Arc    | Rc into Arc                                        | Arc to Rc                                                                                    | Arc into Rc                                                       |
-| ---                                       | ---:                                                                  | ---       | ---          | ---                                                | ---                                                                                          | ---                                                      |
-| `std::rc::Rc<T>` / `std::sync::Arc<T>`    | 2 words (32-bits: 8 bytes, 64-bit: 16 bytes)                          | yes       | N/A          | N/A                                                | N/A                                                                                          | N/A                                                        |
-| `LocalRc<T>` / `SharedRc<T>`              | 1 word (32-bits: 4 bytes, 64-bit: 8 bytes), `small_counters`: 4 bytes | no        | Clones `T`   | **Unique**: In place<br>**Non-unique**: Clones `T` | Clones `T`                                                                                   | **Unique**: In place<br>**Non-unique**: Clones `T`                                               |
-| `LocalHybridRc<T>` / `SharedHybridRc<T>`  | 8 bytes                                                               | no        | In place     | In place                                           | **Rc count = 0**: In place<br>**Rc count &gt; 0**: Clones `T`                                | **Rc count = 0**: In place<br>**Rc count &gt; 0**: Clones `T`                               |
-| `LocalThreadRc<T>` / `SharedThreadRc<T>`  | 1 word (32-bits: 4 bytes, 64-bit: 8 bytes) + 8 bytes                  | no        | In place     | In place                                           | **Rc count = 0 OR same thread**: in place<br>**Rc count &gt; 0 OR other thread**: Clones `T` | **Rc count = 0 OR same thread**: in place<br>**Rc count &gt; 0 OR other thread**: Clones `T` |
+| Type                                      | Metadata overhead                                                     | Weak refs | Rc to Arc    | Rc into Arc                                        | Arc to Rc                                                                                    | Arc into Rc                                                                                      |
+| ---                                       | ---                                                                   | ---       | ---          | ---                                                | ---                                                                                          | ---                                                                                              |
+| `std::rc::Rc<T>` / `std::sync::Arc<T>`    | 2 words (32-bits: 8 bytes, 64-bit: 16 bytes)                          | yes       | N/A          | N/A                                                | N/A                                                                                          | N/A                                                                                              |
+| `SmallRc<T>` / `SmallArc<T>`              | 1 word (32-bits: 4 bytes, 64-bit: 8 bytes), `small_counters`: 4 bytes | no        | Clones `T`   | **Unique**: In place<br>**Non-unique**: Clones `T` | Clones `T`                                                                                   | **Unique**: In place<br>**Non-unique**: Clones `T`                                               |
+| `HybridRc<T>` / `HybridArc<T>`            | 8 bytes                                                               | no        | In place     | In place                                           | **Rc count = 0**: In place<br>**Rc count &gt; 0**: Clones `T`                                | **Rc count = 0**: In place<br>**Rc count &gt; 0**: Clones `T`                                    |
+| `ThreadRc<T>` / `ThreadArc<T>`            | 1 word (32-bits: 4 bytes, 64-bit: 8 bytes) + 8 bytes                  | no        | In place     | In place                                           | **Rc count = 0 OR same thread**: in place<br>**Rc count &gt; 0 OR other thread**: Clones `T` | **Rc count = 0 OR same thread**: in place<br>**Rc count &gt; 0 OR other thread**: Clones `T`     |
 
 ## Features
 
 - `std` *(default)*: enables standard-library support and process abort on counter overflow.
-- `track_threads` *(default, implies `std`)*: enables `LocalThreadRc<T>` and `SharedThreadRc<T>` types.
-- `small_counters`: uses smaller counters for `LocalRc<T>` and `SharedRc<T>`.
+- `track_threads` *(default, implies `std`)*: enables `ThreadRc<T>` and `ThreadArc<T>` types.
+- `small_counters`: uses smaller counters for `SmallRc<T>` and `SmallArc<T>`.
 - `str_deref`: lets `FlexRc<_, _, [u8]>` created from string data dereference as `str`.
 
 Disable default features for `no_std` plus `alloc` use:

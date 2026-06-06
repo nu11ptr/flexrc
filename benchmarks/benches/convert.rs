@@ -2,7 +2,7 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use flexrc::{
-    LocalHybridRc, LocalRc, LocalThreadRc, SharedHybridRc, SharedRc, SharedThreadRc,
+    HybridRc, SmallRc, ThreadRc, HybridArc, SmallArc, ThreadArc,
 };
 
 macro_rules! convert {
@@ -20,104 +20,104 @@ macro_rules! convert {
 }
 
 convert!(
-    "Regular LocalRc -> SharedRc / into_other",
-    || LocalRc::new(black_box(1usize)),
-    |local: LocalRc<usize>| {
-        let shared: SharedRc<usize> = local.into_other();
+    "SmallRc -> SmallArc / into_other",
+    || SmallRc::new(black_box(1usize)),
+    |local: SmallRc<usize>| {
+        let shared: SmallArc<usize> = local.into_other();
         black_box(shared);
     },
-    "Regular SharedRc -> LocalRc / into_other",
-    || SharedRc::new(black_box(1usize)),
-    |shared: SharedRc<usize>| {
-        let local: LocalRc<usize> = shared.into_other();
+    "SmallArc -> SmallRc / into_other",
+    || SmallArc::new(black_box(1usize)),
+    |shared: SmallArc<usize>| {
+        let local: SmallRc<usize> = shared.into_other();
         black_box(local);
     },
-    "Regular LocalRc -> SharedRc / to_other",
-    || LocalRc::new(black_box(1usize)),
-    |local: LocalRc<usize>| {
-        let shared: SharedRc<usize> = local.to_other();
+    "SmallRc -> SmallArc / to_other",
+    || SmallRc::new(black_box(1usize)),
+    |local: SmallRc<usize>| {
+        let shared: SmallArc<usize> = local.to_other();
         black_box(&local);
         black_box(shared);
     },
-    "Regular SharedRc -> LocalRc / to_other",
-    || SharedRc::new(black_box(1usize)),
-    |shared: SharedRc<usize>| {
-        let local: LocalRc<usize> = shared.to_other();
+    "SmallArc -> SmallRc / to_other",
+    || SmallArc::new(black_box(1usize)),
+    |shared: SmallArc<usize>| {
+        let local: SmallRc<usize> = shared.to_other();
         black_box(&shared);
         black_box(local);
     },
-    "Hybrid LocalHybridRc -> SharedHybridRc / into_other",
-    || LocalHybridRc::new(black_box(1usize)),
-    |local: LocalHybridRc<usize>| {
-        let shared: SharedHybridRc<usize> = local.into_other();
+    "HybridRc -> HybridArc / into_other",
+    || HybridRc::new(black_box(1usize)),
+    |local: HybridRc<usize>| {
+        let shared: HybridArc<usize> = local.into_other();
         black_box(shared);
     },
-    "Hybrid SharedHybridRc -> LocalHybridRc / into_other",
-    || SharedHybridRc::new(black_box(1usize)),
-    |shared: SharedHybridRc<usize>| {
-        let local: LocalHybridRc<usize> = shared.into_other();
+    "HybridArc -> HybridRc / into_other",
+    || HybridArc::new(black_box(1usize)),
+    |shared: HybridArc<usize>| {
+        let local: HybridRc<usize> = shared.into_other();
         black_box(local);
     },
-    "Hybrid LocalHybridRc -> SharedHybridRc / to_other",
-    || LocalHybridRc::new(black_box(1usize)),
-    |local: LocalHybridRc<usize>| {
-        let shared: SharedHybridRc<usize> = local.to_other();
+    "HybridRc -> HybridArc / to_other",
+    || HybridRc::new(black_box(1usize)),
+    |local: HybridRc<usize>| {
+        let shared: HybridArc<usize> = local.to_other();
         black_box(&local);
         black_box(shared);
     },
-    "Hybrid SharedHybridRc -> LocalHybridRc / to_other",
-    || SharedHybridRc::new(black_box(1usize)),
-    |shared: SharedHybridRc<usize>| {
-        let local: LocalHybridRc<usize> = shared.to_other();
+    "HybridArc -> HybridRc / to_other",
+    || HybridArc::new(black_box(1usize)),
+    |shared: HybridArc<usize>| {
+        let local: HybridRc<usize> = shared.to_other();
         black_box(&shared);
         black_box(local);
     },
-    "Thread LocalThreadRc -> SharedThreadRc / into_other",
-    || LocalThreadRc::new(black_box(1usize)),
-    |local: LocalThreadRc<usize>| {
-        let shared: SharedThreadRc<usize> = local.into_other();
+    "ThreadRc -> ThreadArc / into_other",
+    || ThreadRc::new(black_box(1usize)),
+    |local: ThreadRc<usize>| {
+        let shared: ThreadArc<usize> = local.into_other();
         black_box(shared);
     },
-    "Thread SharedThreadRc -> LocalThreadRc / into_other",
-    || SharedThreadRc::new(black_box(1usize)),
-    |shared: SharedThreadRc<usize>| {
-        let local: LocalThreadRc<usize> = shared.into_other();
+    "ThreadArc -> ThreadRc / into_other",
+    || ThreadArc::new(black_box(1usize)),
+    |shared: ThreadArc<usize>| {
+        let local: ThreadRc<usize> = shared.into_other();
         black_box(local);
     },
-    "Thread LocalThreadRc -> SharedThreadRc / to_other",
-    || LocalThreadRc::new(black_box(1usize)),
-    |local: LocalThreadRc<usize>| {
-        let shared: SharedThreadRc<usize> = local.to_other();
+    "ThreadRc -> ThreadArc / to_other",
+    || ThreadRc::new(black_box(1usize)),
+    |local: ThreadRc<usize>| {
+        let shared: ThreadArc<usize> = local.to_other();
         black_box(&local);
         black_box(shared);
     },
-    "Thread SharedThreadRc -> LocalThreadRc / to_other",
-    || SharedThreadRc::new(black_box(1usize)),
-    |shared: SharedThreadRc<usize>| {
-        let local: LocalThreadRc<usize> = shared.to_other();
+    "ThreadArc -> ThreadRc / to_other",
+    || ThreadArc::new(black_box(1usize)),
+    |shared: ThreadArc<usize>| {
+        let local: ThreadRc<usize> = shared.to_other();
         black_box(&shared);
         black_box(local);
     },
-    "Thread SharedThreadRc -> LocalThreadRc / to_other local present",
+    "ThreadArc -> ThreadRc / to_other local present",
     || {
-        let local = LocalThreadRc::new(black_box(1usize));
-        let shared: SharedThreadRc<usize> = local.to_other();
+        let local = ThreadRc::new(black_box(1usize));
+        let shared: ThreadArc<usize> = local.to_other();
         (local, shared)
     },
-    |(local, shared): (LocalThreadRc<usize>, SharedThreadRc<usize>)| {
-        let recovered: LocalThreadRc<usize> = shared.to_other();
+    |(local, shared): (ThreadRc<usize>, ThreadArc<usize>)| {
+        let recovered: ThreadRc<usize> = shared.to_other();
         black_box(&local);
         black_box(&shared);
         black_box(recovered);
     },
-    "Thread SharedThreadRc -> LocalThreadRc / into_other local present",
+    "ThreadArc -> ThreadRc / into_other local present",
     || {
-        let local = LocalThreadRc::new(black_box(1usize));
-        let shared: SharedThreadRc<usize> = local.to_other();
+        let local = ThreadRc::new(black_box(1usize));
+        let shared: ThreadArc<usize> = local.to_other();
         (local, shared)
     },
-    |(local, shared): (LocalThreadRc<usize>, SharedThreadRc<usize>)| {
-        let recovered: LocalThreadRc<usize> = shared.into_other();
+    |(local, shared): (ThreadRc<usize>, ThreadArc<usize>)| {
+        let recovered: ThreadRc<usize> = shared.into_other();
         black_box(&local);
         black_box(recovered);
     }

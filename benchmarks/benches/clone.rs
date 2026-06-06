@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use flexrc::{LocalHybridRc, LocalRc, LocalThreadRc, SharedHybridRc, SharedRc, SharedThreadRc};
+use flexrc::{HybridRc, SmallRc, ThreadRc, HybridArc, SmallArc, ThreadArc};
 
 const ITERATIONS: usize = 10_000;
 
@@ -38,18 +38,18 @@ clone!(
     |len| -> Rc<str> { "x".repeat(len).into() },
     "Arc<str>",
     |len| -> Arc<str> { "x".repeat(len).into() },
-    "LocalRc",
-    |len| LocalRc::from_str_ref(&*"x".repeat(len)),
-    "SharedRc",
-    |len| SharedRc::from_str_ref(&*"x".repeat(len)),
-    "LocalHybridRc",
-    |len| LocalHybridRc::from_str_ref(&*"x".repeat(len)),
-    "SharedHybridRc",
-    |len| SharedHybridRc::from_str_ref(&*"x".repeat(len)),
-    "LocalThreadRc",
-    |len| LocalThreadRc::from_str_ref(&*"x".repeat(len)),
-    "SharedThreadRc",
-    |len| SharedThreadRc::from_str_ref(&*"x".repeat(len))
+    "SmallRc",
+    |len| SmallRc::from_str_ref(&*"x".repeat(len)),
+    "SmallArc",
+    |len| SmallArc::from_str_ref(&*"x".repeat(len)),
+    "HybridRc",
+    |len| HybridRc::from_str_ref(&*"x".repeat(len)),
+    "HybridArc",
+    |len| HybridArc::from_str_ref(&*"x".repeat(len)),
+    "ThreadRc",
+    |len| ThreadRc::from_str_ref(&*"x".repeat(len)),
+    "ThreadArc",
+    |len| ThreadArc::from_str_ref(&*"x".repeat(len))
 );
 
 criterion_group!(benches, clone);

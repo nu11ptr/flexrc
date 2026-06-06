@@ -20,11 +20,11 @@ assert_eq_size!(HybridMeta<LocalMode>, HybridMeta<SharedMode>);
 assert_eq_align!(HybridMeta<LocalMode>, HybridMeta<SharedMode>);
 assert_eq_size!(LocalInner<usize>, SharedInner<usize>);
 assert_eq_align!(LocalInner<usize>, SharedInner<usize>);
-assert_eq_size!(LocalHybridRc<usize>, SharedHybridRc<usize>);
-assert_eq_align!(LocalHybridRc<usize>, SharedHybridRc<usize>);
+assert_eq_size!(HybridRc<usize>, HybridArc<usize>);
+assert_eq_align!(HybridRc<usize>, HybridArc<usize>);
 
-assert_impl_all!(SharedHybridRc<usize>: Send, Sync);
-assert_not_impl_any!(LocalHybridRc<usize>: Send, Sync);
+assert_impl_all!(HybridArc<usize>: Send, Sync);
+assert_not_impl_any!(HybridRc<usize>: Send, Sync);
 
 // Entire counter is usable for local
 pub(in crate::algorithm) const MAX_LOCAL_COUNT: u32 = u32::MAX;
@@ -44,7 +44,7 @@ pub struct HybridMeta<MODE> {
     phantom: PhantomData<MODE>,
 }
 
-pub type LocalHybridRc<T> = FlexRc<HybridMeta<LocalMode>, HybridMeta<SharedMode>, T>;
+pub type HybridRc<T> = FlexRc<HybridMeta<LocalMode>, HybridMeta<SharedMode>, T>;
 
 type LocalInner<T> = FlexRcInner<HybridMeta<LocalMode>, HybridMeta<SharedMode>, T>;
 type SharedInner<T> = FlexRcInner<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>;
@@ -191,12 +191,12 @@ impl Algorithm<HybridMeta<LocalMode>, HybridMeta<SharedMode>> for HybridMeta<Loc
     }
 }
 
-pub type SharedHybridRc<T> = FlexRc<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>;
+pub type HybridArc<T> = FlexRc<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>;
 
 // SAFETY: We ensure what we are holding is Sync/Send and we have been careful to ensure invariants
 // that allow these marked to be safe
-unsafe impl<T: ?Sized + Send + Sync> Send for SharedHybridRc<T> {}
-unsafe impl<T: ?Sized + Send + Sync> Sync for SharedHybridRc<T> {}
+unsafe impl<T: ?Sized + Send + Sync> Send for HybridArc<T> {}
+unsafe impl<T: ?Sized + Send + Sync> Sync for HybridArc<T> {}
 
 impl HybridMeta<SharedMode> {
     #[inline(always)]
