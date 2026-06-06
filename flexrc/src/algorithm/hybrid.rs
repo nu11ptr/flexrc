@@ -5,13 +5,13 @@ use core::sync::atomic::AtomicU32;
 #[cfg(all(not(loom), not(feature = "small_counters")))]
 use core::sync::atomic::AtomicUsize;
 #[cfg(not(loom))]
-use core::sync::atomic::{fence, Ordering};
+use core::sync::atomic::Ordering;
 #[cfg(all(loom, feature = "small_counters"))]
 use loom::sync::atomic::AtomicU32;
 #[cfg(all(loom, not(feature = "small_counters")))]
 use loom::sync::atomic::AtomicUsize;
 #[cfg(loom)]
-use loom::sync::atomic::{fence, Ordering};
+use loom::sync::atomic::Ordering;
 
 use static_assertions::{assert_eq_align, assert_eq_size, assert_impl_all, assert_not_impl_any};
 
@@ -89,7 +89,7 @@ pub(in crate::algorithm) fn release_shared(shared_count: &AtomicCount) -> bool {
     // If the value was 1 previously, that means LOCAL_PRESENT wasn't set which means this
     // is the last remaining counter
     if shared_count.fetch_sub(1, Ordering::Release) == 1 {
-        fence(Ordering::Acquire);
+        crate::algorithm::acquire_after_release!(shared_count);
         true
     } else {
         false
@@ -124,7 +124,7 @@ pub(in crate::algorithm) fn release_local(
         let old_shared = shared_count.fetch_and(CLEAR_LOCAL, Ordering::Release);
 
         if old_shared == LOCAL_PRESENT {
-            fence(Ordering::Acquire);
+            crate::algorithm::acquire_after_release!(shared_count);
             true
         } else {
             false

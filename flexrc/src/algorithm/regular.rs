@@ -7,13 +7,13 @@ use core::sync::atomic::AtomicU32;
 #[cfg(all(not(loom), not(feature = "small_counters")))]
 use core::sync::atomic::AtomicUsize;
 #[cfg(not(loom))]
-use core::sync::atomic::{fence, Ordering};
+use core::sync::atomic::Ordering;
 #[cfg(all(loom, feature = "small_counters"))]
 use loom::sync::atomic::AtomicU32;
 #[cfg(all(loom, not(feature = "small_counters")))]
 use loom::sync::atomic::AtomicUsize;
 #[cfg(loom)]
-use loom::sync::atomic::{fence, Ordering};
+use loom::sync::atomic::Ordering;
 
 use static_assertions::{assert_eq_align, assert_eq_size, assert_impl_all, assert_not_impl_any};
 
@@ -217,7 +217,7 @@ impl Algorithm<Meta<SharedMode>, Meta<LocalMode>> for Meta<SharedMode> {
     fn drop(&self) -> bool {
         // SAFETY: We are accessing the correct variant for this type and we know the layout.
         if unsafe { self.shared.fetch_sub(1, Ordering::Release) } == 1 {
-            fence(Ordering::Acquire);
+            crate::algorithm::acquire_after_release!(unsafe { &self.shared });
             true
         } else {
             false

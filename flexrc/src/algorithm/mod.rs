@@ -13,6 +13,41 @@ pub use regular::*;
 pub struct LocalMode;
 pub struct SharedMode;
 
+#[cfg(not(flexrc_sanitize_thread))]
+macro_rules! acquire_after_release {
+    ($counter:expr) => {{
+        #[cfg(not(loom))]
+        {
+            core::sync::atomic::fence(core::sync::atomic::Ordering::Acquire)
+        }
+
+        #[cfg(loom)]
+        {
+            loom::sync::atomic::fence(loom::sync::atomic::Ordering::Acquire)
+        }
+    }};
+}
+
+// ThreadSanitizer does not model standalone acquire fences. Match std::sync::Arc
+// and use an acquire load for sanitizer builds so the final release/deallocate
+// path is understood as synchronized with earlier reference-count releases.
+#[cfg(flexrc_sanitize_thread)]
+macro_rules! acquire_after_release {
+    ($counter:expr) => {{
+        #[cfg(not(loom))]
+        {
+            $counter.load(core::sync::atomic::Ordering::Acquire)
+        }
+
+        #[cfg(loom)]
+        {
+            $counter.load(loom::sync::atomic::Ordering::Acquire)
+        }
+    }};
+}
+
+pub(crate) use acquire_after_release;
+
 pub trait Algorithm<META, META2> {
     /// Create and return new metadata    
     fn create() -> Self;

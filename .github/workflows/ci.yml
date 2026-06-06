@@ -179,8 +179,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu -p flexrc --test stress --all-features
         env:
-          RUSTFLAGS: -Zsanitizer=thread
-          RUSTDOCFLAGS: -Zsanitizer=thread
+          RUSTFLAGS: -Zsanitizer=thread --cfg flexrc_sanitize_thread
+          RUSTDOCFLAGS: -Zsanitizer=thread --cfg flexrc_sanitize_thread
           TSAN_OPTIONS: halt_on_error=1
           FLEXRC_STRESS_ITERS: 64
           FLEXRC_STRESS_THREADS: 4
