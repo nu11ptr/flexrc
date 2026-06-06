@@ -36,13 +36,13 @@ Metadata size is the allocation header metadata. It does not include the pointed
 Disable default features for `no_std` plus `alloc` use:
 
 ```toml
-flexrc = { version = "0.1", default-features = false }
+flexrc = { version = "0.2", default-features = false }
 ```
 
 Use `std` without the thread-tracked family:
 
 ```toml
-flexrc = { version = "0.1", default-features = false, features = ["std"] }
+flexrc = { version = "0.2", default-features = false, features = ["std"] }
 ```
 
 ## Performance / Benchmarks

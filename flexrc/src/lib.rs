@@ -49,7 +49,7 @@ impl<META, META2, T> FlexRcInner<META, META2, [mem::MaybeUninit<T>]> {
     unsafe fn assume_init(&mut self) -> &mut FlexRcInner<META, META2, [T]> {
         // SAFETY: We hold an exclusive borrow and we just cast away `MaybeUninit<T>` which is
         // guaranteed to be layout/alignment identical to `T`
-        &mut *(self as *mut Self as *mut FlexRcInner<META, META2, [T]>)
+        unsafe { &mut *(self as *mut Self as *mut FlexRcInner<META, META2, [T]>) }
     }
 }
 
@@ -228,13 +228,13 @@ where
     /// (thus why it is an unsafe function)
     #[inline]
     pub unsafe fn assume_init(self) -> FlexRc<META, META2, [T]> {
+        // Avoid drop to ensure no ref count decrement
+        let mut this = mem::ManuallyDrop::new(self);
+
         FlexRc::from_inner(
-            // Avoid drop to ensure no ref count decrement
-            mem::ManuallyDrop::new(self)
-                .ptr
-                .as_mut()
-                .assume_init()
-                .into(),
+            // SAFETY: The caller guarantees the slice elements are initialized, and `this` keeps
+            // the original handle from dropping while we retag the allocation.
+            unsafe { this.ptr.as_mut().assume_init() }.into(),
         )
     }
 }
@@ -330,7 +330,8 @@ where
     /// The user is trusted they are to be the sole owner before calling this (typically at init time)
     #[inline]
     pub unsafe fn get_mut_unchecked(&mut self) -> &mut T {
-        &mut (*self.ptr.as_ptr()).data
+        // SAFETY: The caller guarantees unique access to the allocation.
+        unsafe { &mut (*self.ptr.as_ptr()).data }
     }
 
     /// Try to convert this into a type with the other type of metadata for the pair (local -> shared,

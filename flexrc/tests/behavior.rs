@@ -7,8 +7,8 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomPinned;
 use std::mem;
 use std::ptr;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
 #[derive(Debug, Default)]

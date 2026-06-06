@@ -1,8 +1,8 @@
 #![cfg(loom)]
 
 use flexrc::*;
-use loom::sync::atomic::{AtomicBool, Ordering};
 use loom::sync::Arc;
+use loom::sync::atomic::{AtomicBool, Ordering};
 use loom::thread;
 
 // A simple drop tracker to verify that drop happens exactly once
@@ -156,34 +156,34 @@ fn loom_small_rc_test<META1, META2>(
 
 #[test]
 fn test_small_rc_clone_drop() {
-    loom_small_rc_test(|tracker| SmallRc::new(tracker));
+    loom_small_rc_test(SmallRc::new);
 }
 
 #[test]
 fn test_small_arc_clone_drop() {
-    loom_small_arc_test(|tracker| SmallArc::new(tracker));
+    loom_small_arc_test(SmallArc::new);
 }
 
 #[test]
 fn test_hybrid_rc_clone_drop() {
-    loom_small_rc_test(|tracker| HybridRc::new(tracker));
+    loom_small_rc_test(HybridRc::new);
 }
 
 #[test]
 fn test_hybrid_arc_clone_drop() {
-    loom_small_arc_test(|tracker| HybridArc::new(tracker));
+    loom_small_arc_test(HybridArc::new);
 }
 
 #[cfg(feature = "track_threads")]
 #[test]
 fn test_thread_rc_clone_drop() {
-    loom_small_rc_test(|tracker| ThreadRc::new(tracker));
+    loom_small_rc_test(ThreadRc::new);
 }
 
 #[cfg(feature = "track_threads")]
 #[test]
 fn test_thread_arc_clone_drop() {
-    loom_small_arc_test(|tracker| ThreadArc::new(tracker));
+    loom_small_arc_test(ThreadArc::new);
 }
 
 #[test]

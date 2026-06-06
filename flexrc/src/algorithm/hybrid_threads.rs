@@ -12,7 +12,7 @@ use static_assertions::{assert_eq_align, assert_eq_size, assert_impl_all, assert
 
 use crate::algorithm::abort;
 use crate::algorithm::hybrid::{
-    release_local, release_shared, retain_local, retain_shared, AtomicCount, Count, LOCAL_PRESENT,
+    AtomicCount, Count, LOCAL_PRESENT, release_local, release_shared, retain_local, retain_shared,
 };
 use crate::{Algorithm, FlexRc, FlexRcInner, LocalMode, SharedMode};
 
