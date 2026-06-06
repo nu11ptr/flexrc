@@ -132,10 +132,15 @@ impl Algorithm<Meta<LocalMode>, Meta<SharedMode>> for Meta<LocalMode> {
 
     #[inline]
     unsafe fn try_into_other<T: ?Sized>(
-        &self,
         inner: *mut LocalInner<T>,
     ) -> Result<*mut SharedInner<T>, *mut LocalInner<T>> {
-        if self.is_unique() {
+        // SAFETY: We are accessing the correct variant for this type and we know the layout.
+        let is_unique = unsafe {
+            let metadata = ptr::addr_of!((*inner).metadata);
+            (*metadata).is_unique()
+        };
+
+        if is_unique {
             // SAFETY: We are accessing the correct variant for this type and we know the layout.
             // We also know we have unique access to the inner so we can safely write to the shared variant.
             unsafe {
@@ -161,7 +166,6 @@ impl Algorithm<Meta<LocalMode>, Meta<SharedMode>> for Meta<LocalMode> {
 
     #[inline]
     unsafe fn try_to_other<T: ?Sized>(
-        &self,
         inner: *mut LocalInner<T>,
     ) -> Result<*mut SharedInner<T>, *mut LocalInner<T>> {
         // This is never safe to do
@@ -222,10 +226,12 @@ impl Algorithm<Meta<SharedMode>, Meta<LocalMode>> for Meta<SharedMode> {
 
     #[inline]
     unsafe fn try_into_other<T: ?Sized>(
-        &self,
         inner: *mut SharedInner<T>,
     ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
-        if self.is_unique() {
+        let metadata = unsafe { ptr::addr_of!((*inner).metadata) };
+        let is_unique = unsafe { (*metadata).is_unique() };
+
+        if is_unique {
             // SAFETY: We are accessing the correct variant for this type and we know the layout.
             // We also know we have unique access to the inner so we can safely write to the shared variant.
             unsafe {
@@ -248,7 +254,6 @@ impl Algorithm<Meta<SharedMode>, Meta<LocalMode>> for Meta<SharedMode> {
 
     #[inline]
     unsafe fn try_to_other<T: ?Sized>(
-        &self,
         inner: *mut SharedInner<T>,
     ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
         // This is never safe to do

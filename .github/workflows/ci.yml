@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        command:
+          - cargo test -p flexrc
+          - cargo test -p flexrc --no-default-features
+          - cargo test -p flexrc --no-default-features --features small_counters
+          - cargo test -p flexrc --no-default-features --features str_deref
+          - cargo test -p flexrc --features small_counters
+          - cargo test -p flexrc --features track_threads
+          - cargo test -p flexrc --features str_deref
+          - cargo test -p flexrc --all-features
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: ${{ matrix.command }}
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy -p flexrc --all-targets --all-features -- -D warnings
+
+  loom:
+    name: Loom
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - ""
+          - "--no-default-features"
+          - "--no-default-features --features small_counters"
+          - "--features small_counters"
+          - "--features track_threads"
+          - "--all-features"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: RUSTFLAGS='--cfg loom' cargo test -p flexrc --test loom_test ${{ matrix.features }}
+
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - ""
+          - "--all-features"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +nightly miri setup
+      - run: cargo +nightly miri test -p flexrc --test behavior ${{ matrix.features }}
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check

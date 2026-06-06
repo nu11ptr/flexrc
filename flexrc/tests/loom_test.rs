@@ -25,6 +25,13 @@ impl Drop for DropTracker {
     }
 }
 
+fn expect_ok<T, E>(result: Result<T, E>, message: &str) -> T {
+    match result {
+        Ok(value) => value,
+        Err(_) => panic!("{message}"),
+    }
+}
+
 // Test helper for shared RC types that can be moved across threads
 fn loom_shared_rc_test<META1, META2>(
     create_rc: impl Fn(DropTracker) -> FlexRc<META1, META2, DropTracker> + Send + Sync + 'static,
@@ -49,7 +56,7 @@ fn loom_shared_rc_test<META1, META2>(
         let handles: Vec<_> = (0..num_threads)
             .map(|_| {
                 let rc_clone = rc.clone();
-                
+
                 thread::spawn(move || {
                     // Verify we can access the value through the clone
                     assert_eq!(rc_clone.value, 42);
@@ -157,4 +164,129 @@ fn test_local_hybrid_rc_clone_drop() {
 #[test]
 fn test_shared_hybrid_rc_clone_drop() {
     loom_shared_rc_test(|tracker| SharedHybridRc::new(tracker));
+}
+
+#[test]
+fn test_regular_local_into_shared_conversion() {
+    loom::model(|| {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let local: LocalRc<DropTracker> = LocalRc::new(DropTracker::new(dropped.clone(), 42));
+
+        let shared: SharedRc<DropTracker> =
+            expect_ok(local.try_into_other(), "unique LocalRc should promote");
+
+        assert_eq!(shared.value, 42);
+        assert!(!dropped.load(Ordering::Relaxed));
+
+        drop(shared);
+        assert!(dropped.load(Ordering::Relaxed));
+    });
+}
+
+#[test]
+fn test_regular_shared_into_local_conversion() {
+    loom::model(|| {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let shared: SharedRc<DropTracker> = SharedRc::new(DropTracker::new(dropped.clone(), 42));
+
+        let local: LocalRc<DropTracker> =
+            expect_ok(shared.try_into_other(), "unique SharedRc should demote");
+
+        assert_eq!(local.value, 42);
+        assert!(!dropped.load(Ordering::Relaxed));
+
+        drop(local);
+        assert!(dropped.load(Ordering::Relaxed));
+    });
+}
+
+#[test]
+fn test_hybrid_local_shared_drop_race() {
+    loom::model(|| {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let local: LocalHybridRc<DropTracker> =
+            LocalHybridRc::new(DropTracker::new(dropped.clone(), 42));
+        let shared: SharedHybridRc<DropTracker> =
+            expect_ok(local.try_to_other(), "hybrid local should retain shared");
+
+        let shared_owner = Arc::new(shared);
+        let thread_owner = shared_owner.clone();
+
+        let handle = thread::spawn(move || {
+            let shared_clone = (*thread_owner).clone();
+            assert_eq!(shared_clone.value, 42);
+            drop(shared_clone);
+        });
+
+        drop(local);
+        assert!(!dropped.load(Ordering::Relaxed));
+
+        handle.join().unwrap();
+        assert!(!dropped.load(Ordering::Relaxed));
+
+        drop(shared_owner);
+        assert!(dropped.load(Ordering::Relaxed));
+    });
+}
+
+#[test]
+fn test_hybrid_shared_into_local_races_with_shared_drop() {
+    loom::model(|| {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let shared: SharedHybridRc<DropTracker> =
+            SharedHybridRc::new(DropTracker::new(dropped.clone(), 42));
+        let thread_shared = shared.clone();
+
+        let handle = thread::spawn(move || {
+            assert_eq!(thread_shared.value, 42);
+            drop(thread_shared);
+        });
+
+        let local: LocalHybridRc<DropTracker> = expect_ok(
+            shared.try_into_other(),
+            "hybrid shared should transfer to local",
+        );
+
+        handle.join().unwrap();
+        assert!(!dropped.load(Ordering::Relaxed));
+
+        drop(local);
+        assert!(dropped.load(Ordering::Relaxed));
+    });
+}
+
+#[test]
+fn test_hybrid_shared_clone_while_local_present() {
+    loom::model(|| {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let shared: SharedHybridRc<DropTracker> =
+            SharedHybridRc::new(DropTracker::new(dropped.clone(), 42));
+        let local: LocalHybridRc<DropTracker> =
+            expect_ok(shared.try_to_other(), "hybrid shared should retain local");
+
+        let shared_owner = Arc::new(shared);
+        let first_owner = shared_owner.clone();
+        let second_owner = shared_owner.clone();
+
+        let first = thread::spawn(move || {
+            let clone = (*first_owner).clone();
+            assert_eq!(clone.value, 42);
+            drop(clone);
+        });
+
+        let second = thread::spawn(move || {
+            let clone = (*second_owner).clone();
+            assert_eq!(clone.value, 42);
+            drop(clone);
+        });
+
+        first.join().unwrap();
+        second.join().unwrap();
+
+        drop(shared_owner);
+        assert!(!dropped.load(Ordering::Relaxed));
+
+        drop(local);
+        assert!(dropped.load(Ordering::Relaxed));
+    });
 }

@@ -24,21 +24,26 @@ pub trait Algorithm<META, META2> {
     /// Decrement reference counters and return true if storage should be deallocated
     fn drop(&self) -> bool;
 
-    /// Attempts to converts one inner type into another while consuming the other
+    /// Attempts to convert one inner type into another while consuming the original handle.
+    ///
+    /// On success, the caller will not run the original handle's destructor. Implementations must
+    /// fully transfer that one handle's count into the returned representation. On failure, the
+    /// original handle must remain valid and unchanged from the caller's perspective.
     ///
     /// # Safety
     /// It is up to the recipient to ensure the pointer is used correctly
     unsafe fn try_into_other<T: ?Sized>(
-        &self,
         inner: *mut FlexRcInner<META, META2, T>,
     ) -> Result<*mut FlexRcInner<META2, META, T>, *mut FlexRcInner<META, META2, T>>;
 
-    /// Attempts to converts one inner type into another but NOT consuming the other
+    /// Attempts to convert one inner type into another without consuming the original handle.
+    ///
+    /// On success, implementations must retain an additional handle for the returned
+    /// representation.
     ///
     /// # Safety
     /// It is up to the recipient to ensure the pointer is used correctly
     unsafe fn try_to_other<T: ?Sized>(
-        &self,
         inner: *mut FlexRcInner<META, META2, T>,
     ) -> Result<*mut FlexRcInner<META2, META, T>, *mut FlexRcInner<META, META2, T>>;
 }

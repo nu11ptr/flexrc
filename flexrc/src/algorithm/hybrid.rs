@@ -40,7 +40,9 @@ const THREAD_ID_UNLOCKED: usize = usize::MAX >> 1;
 // Entire counter is usable for local
 const MAX_LOCAL_COUNT: u32 = u32::MAX;
 // Save top bit for "local present" bit and second to top for overflow
-const MAX_SHARED_COUNT: u32 = u32::MAX >> 2;
+const SHARED_COUNT_MASK: u32 = u32::MAX >> 2;
+const MAX_SHARED_COUNT: u32 = SHARED_COUNT_MASK;
+const SHARED_OVERFLOW: u32 = SHARED_COUNT_MASK + 1;
 // Top bit of shared counter signifies local present (or not)
 const LOCAL_PRESENT: u32 = (u32::MAX >> 1) + 1;
 // All bits set except top
@@ -59,6 +61,45 @@ pub type LocalHybridRc<T> = FlexRc<HybridMeta<LocalMode>, HybridMeta<SharedMode>
 
 type LocalInner<T> = FlexRcInner<HybridMeta<LocalMode>, HybridMeta<SharedMode>, T>;
 type SharedInner<T> = FlexRcInner<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>;
+
+#[inline(always)]
+fn abort_on_shared_overflow(old: u32) {
+    if old & SHARED_OVERFLOW != 0 || old & SHARED_COUNT_MASK == MAX_SHARED_COUNT {
+        abort()
+    }
+}
+
+impl HybridMeta<LocalMode> {
+    #[inline(always)]
+    fn retain_shared(&self) {
+        let old = self.shared_count.fetch_add(1, Ordering::Relaxed);
+        abort_on_shared_overflow(old);
+    }
+
+    #[inline(always)]
+    fn release_local(&self) -> bool {
+        let old = self.local_count.get();
+
+        if old == 0 {
+            abort()
+        }
+
+        self.local_count.set(old - 1);
+
+        if old == 1 {
+            let old_shared = self.shared_count.fetch_and(CLEAR_LOCAL, Ordering::Release);
+
+            if old_shared == LOCAL_PRESENT {
+                fence(Ordering::Acquire);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+}
 
 impl Algorithm<HybridMeta<LocalMode>, HybridMeta<SharedMode>> for HybridMeta<LocalMode> {
     #[inline]
@@ -92,47 +133,40 @@ impl Algorithm<HybridMeta<LocalMode>, HybridMeta<SharedMode>> for HybridMeta<Loc
 
     #[inline(always)]
     fn drop(&self) -> bool {
-        self.local_count.set(self.local_count.get() - 1);
-
-        if self.local_count.get() == 0 {
-            // FIXME: Verify correct Ordering
-            let old = self.shared_count.fetch_and(CLEAR_LOCAL, Ordering::Release);
-
-            // If the value is just `LOCAL_PRESENT` that means only the top bit was set and the
-            // shared counter was zero
-            old == LOCAL_PRESENT
-        } else {
-            false
-        }
+        self.release_local()
     }
 
     #[inline]
     unsafe fn try_into_other<T: ?Sized>(
-        &self,
         inner: *mut LocalInner<T>,
     ) -> Result<*mut SharedInner<T>, *mut LocalInner<T>> {
-        // This is always allowed
+        // SAFETY: We are accessing the correct variant for this type and we know the layout.
+        let metadata = unsafe { &(*inner).metadata };
 
         // Safety: These are literally the same type - we invented the `SharedMode` and `LocalMode` tags
         // to FORCE new types where there wouldn't otherwise be so this is safe to cast
         let inner = inner as *mut SharedInner<T>;
 
-        // Since a) creating a new instance, not reusing b) using a diff ref counter field we now
-        // need to force a clone
-        // SAFETY: See above
-        unsafe {
-            (*inner).metadata.clone();
-        }
+        metadata.retain_shared();
+        debug_assert!(!metadata.release_local());
+
         Ok(inner)
     }
 
     #[inline]
     unsafe fn try_to_other<T: ?Sized>(
-        &self,
         inner: *mut LocalInner<T>,
     ) -> Result<*mut SharedInner<T>, *mut LocalInner<T>> {
-        // Since we can always keep the original, both are the same
-        self.try_into_other(inner)
+        // SAFETY: We are accessing the correct variant for this type and we know the layout.
+        let metadata = unsafe { &(*inner).metadata };
+
+        // Safety: These are literally the same type - we invented the `SharedMode` and `LocalMode` tags
+        // to FORCE new types where there wouldn't otherwise be so this is safe to cast
+        let inner = inner as *mut SharedInner<T>;
+
+        metadata.retain_shared();
+
+        Ok(inner)
     }
 }
 
@@ -140,8 +174,39 @@ pub type SharedHybridRc<T> = FlexRc<HybridMeta<SharedMode>, HybridMeta<LocalMode
 
 // SAFETY: We ensure what we are holding is Sync/Send and we have been careful to ensure invariants
 // that allow these marked to be safe
-unsafe impl<T: Send + Sync> Send for SharedHybridRc<T> {}
-unsafe impl<T: Send + Sync> Sync for SharedHybridRc<T> {}
+unsafe impl<T: ?Sized + Send + Sync> Send for SharedHybridRc<T> {}
+unsafe impl<T: ?Sized + Send + Sync> Sync for SharedHybridRc<T> {}
+
+impl HybridMeta<SharedMode> {
+    #[inline(always)]
+    fn retain_shared(&self) {
+        let old = self.shared_count.fetch_add(1, Ordering::Relaxed);
+        abort_on_shared_overflow(old);
+    }
+
+    #[inline(always)]
+    fn release_shared(&self) -> bool {
+        // If the value was 1 previously, that means LOCAL_PRESENT wasn't set which means this
+        // is the last remaining counter
+        if self.shared_count.fetch_sub(1, Ordering::Release) == 1 {
+            fence(Ordering::Acquire);
+            true
+        } else {
+            false
+        }
+    }
+
+    #[inline(always)]
+    fn retain_local(&self) {
+        let old = self.local_count.get();
+
+        if old == MAX_LOCAL_COUNT {
+            abort()
+        }
+
+        self.local_count.set(old + 1);
+    }
+}
 
 impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<SharedMode> {
     #[inline]
@@ -165,37 +230,28 @@ impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<Sha
 
     #[inline(always)]
     fn clone(&self) {
-        let old = self.shared_count.fetch_add(1, Ordering::Relaxed);
-
-        if old > MAX_SHARED_COUNT {
-            abort()
-        }
+        self.retain_shared();
     }
 
     #[inline(always)]
     fn drop(&self) -> bool {
-        // If the value was 1 previously, that means LOCAL_PRESENT wasn't set which means this
-        // is the last remaining counter
-        if self.shared_count.fetch_sub(1, Ordering::Release) == 1 {
-            fence(Ordering::Acquire);
-            true
-        } else {
-            false
-        }
+        self.release_shared()
     }
 
     #[cfg(feature = "track_threads")]
     #[inline]
     unsafe fn try_into_other<T: ?Sized>(
-        &self,
         inner: *mut SharedInner<T>,
     ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
+        // SAFETY: We are accessing the correct variant for this type and we know the layout.
+        let metadata = unsafe { &(*inner).metadata };
         let thread_id = THREAD_ID.with(|thread_id| thread_id.0);
 
         // Spinlock to ensure only one thread can access this at a time
         let old_thread_id = loop {
-            // FIXME: Verify correct Ordering
-            let old_thread_id = self.thread_id.fetch_or(THREAD_ID_LOCKED, Ordering::Acquire);
+            let old_thread_id = metadata
+                .thread_id
+                .fetch_or(THREAD_ID_LOCKED, Ordering::Acquire);
 
             // If we obtained lock than old value would have lock bit unset
             if old_thread_id < THREAD_ID_LOCKED {
@@ -205,30 +261,27 @@ impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<Sha
         };
 
         // Try and make this thread into the local one by setting LOCAL_PRESENT bit.
-        // FIXME: Verify correct Ordering
-        let old_shared_count = self.shared_count.fetch_or(LOCAL_PRESENT, Ordering::Acquire);
+        let old_shared_count = metadata
+            .shared_count
+            .fetch_or(LOCAL_PRESENT, Ordering::AcqRel);
 
         // If we are the local thread OR there is no local thread
         if thread_id == old_thread_id || old_shared_count < LOCAL_PRESENT {
-            // FIXME: Verify correct Ordering
+            metadata.retain_local();
+            metadata.release_shared();
+
             // Store our thread ID which also acts to release the spinlock
-            self.thread_id.store(thread_id, Ordering::Release);
+            metadata.thread_id.store(thread_id, Ordering::Release);
 
             // Safety: These are literally the same type - we invented the `SharedMode` and `LocalMode` tags
             // to FORCE new types where there wouldn't otherwise be so this is safe to cast
             let inner = inner as *mut LocalInner<T>;
 
-            // Since a) creating a new instance, not reusing b) using a diff ref counter field we now
-            // need to force a clone
-            // SAFETY: See above
-            unsafe {
-                (*inner).metadata.clone();
-            }
             Ok(inner)
         } else {
-            // FIXME: Verify correct Ordering
             // Release spinlock and return error
-            self.thread_id
+            metadata
+                .thread_id
                 .fetch_and(THREAD_ID_UNLOCKED, Ordering::Release);
             Err(inner)
         }
@@ -237,37 +290,89 @@ impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<Sha
     #[cfg(not(feature = "track_threads"))]
     #[inline]
     unsafe fn try_into_other<T: ?Sized>(
-        &self,
         inner: *mut SharedInner<T>,
     ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
+        // SAFETY: We are accessing the correct variant for this type and we know the layout.
+        let metadata = unsafe { &(*inner).metadata };
+
         // Try and make this thread into the local one by setting LOCAL_PRESENT bit. If old value
         // is less than LOCAL_PRESENT we know it wasn't previously set (NOTE: Without tracking and
         // comparing a thread ID field it means we can only call this once and it will fail on
         // successive invocations, even when called from the proper thread)
-        // FIXME: Verify correct Ordering
-        if self.shared_count.fetch_or(LOCAL_PRESENT, Ordering::Acquire) < LOCAL_PRESENT {
+        if metadata
+            .shared_count
+            .fetch_or(LOCAL_PRESENT, Ordering::AcqRel)
+            < LOCAL_PRESENT
+        {
+            metadata.retain_local();
+            metadata.release_shared();
+
             // Safety: These are literally the same type - we invented the `SharedMode` and `LocalMode` tags
             // to FORCE new types where there wouldn't otherwise be so this is safe to cast
             let inner = inner as *mut LocalInner<T>;
 
-            // Since a) creating a new instance, not reusing b) using a diff ref counter field we now
-            // need to force a clone
-            // SAFETY: See above
-            unsafe {
-                (*inner).metadata.clone();
-            }
             Ok(inner)
         } else {
             Err(inner)
         }
     }
 
+    #[cfg(feature = "track_threads")]
     #[inline]
     unsafe fn try_to_other<T: ?Sized>(
-        &self,
         inner: *mut SharedInner<T>,
     ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
-        // Since we can always keep the original, both are the same
-        self.try_into_other(inner)
+        // SAFETY: We are accessing the correct variant for this type and we know the layout.
+        let metadata = unsafe { &(*inner).metadata };
+
+        let thread_id = THREAD_ID.with(|thread_id| thread_id.0);
+
+        let old_thread_id = loop {
+            let old_thread_id = metadata
+                .thread_id
+                .fetch_or(THREAD_ID_LOCKED, Ordering::Acquire);
+
+            if old_thread_id < THREAD_ID_LOCKED {
+                break old_thread_id;
+            }
+            std::hint::spin_loop();
+        };
+
+        let old_shared_count = metadata
+            .shared_count
+            .fetch_or(LOCAL_PRESENT, Ordering::AcqRel);
+
+        if thread_id == old_thread_id || old_shared_count < LOCAL_PRESENT {
+            metadata.retain_local();
+            metadata.thread_id.store(thread_id, Ordering::Release);
+
+            Ok(inner as *mut LocalInner<T>)
+        } else {
+            metadata
+                .thread_id
+                .fetch_and(THREAD_ID_UNLOCKED, Ordering::Release);
+            Err(inner)
+        }
+    }
+
+    #[cfg(not(feature = "track_threads"))]
+    #[inline]
+    unsafe fn try_to_other<T: ?Sized>(
+        inner: *mut SharedInner<T>,
+    ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
+        // SAFETY: We are accessing the correct variant for this type and we know the layout.
+        let metadata = unsafe { &(*inner).metadata };
+
+        if metadata
+            .shared_count
+            .fetch_or(LOCAL_PRESENT, Ordering::AcqRel)
+            < LOCAL_PRESENT
+        {
+            metadata.retain_local();
+
+            Ok(inner as *mut LocalInner<T>)
+        } else {
+            Err(inner)
+        }
     }
 }

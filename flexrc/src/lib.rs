@@ -242,16 +242,16 @@ where
     /// return itself instead
     #[inline]
     pub fn try_into_other(self) -> Result<FlexRc<META2, META, T>, Self> {
-        let meta = &self.as_inner().metadata;
+        let this = mem::ManuallyDrop::new(self);
 
         // SAFETY: It is up to the recipient to ensure the pointer is valid
-        match unsafe { meta.try_into_other(self.ptr.as_ptr()) } {
+        match unsafe { META::try_into_other(this.ptr.as_ptr()) } {
             Ok(inner) => {
                 // SAFETY: We are guaranteed to have a non-null pointer here
                 let inner = unsafe { NonNull::new_unchecked(inner) };
                 Ok(<FlexRc<META2, META, T>>::from_inner(inner))
             }
-            Err(_) => Err(self),
+            Err(_) => Err(mem::ManuallyDrop::into_inner(this)),
         }
     }
 
@@ -274,10 +274,8 @@ where
     /// allocation or copying it will return it, else it will fail and return a ref to the same instance
     #[inline]
     pub fn try_to_other(&self) -> Result<FlexRc<META2, META, T>, &Self> {
-        let meta = &self.as_inner().metadata;
-
         // SAFETY: It is up to the recipient to ensure the pointer is valid
-        match unsafe { meta.try_to_other(self.ptr.as_ptr()) } {
+        match unsafe { META::try_to_other(self.ptr.as_ptr()) } {
             Ok(inner) => {
                 // SAFETY: We are guaranteed to have a non-null pointer here
                 let inner = unsafe { NonNull::new_unchecked(inner) };
@@ -302,6 +300,22 @@ where
     }
 }
 
+#[cfg(not(feature = "str_deref"))]
+impl<META, META2, T> Deref for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+    T: ?Sized,
+{
+    type Target = T;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.as_inner().data
+    }
+}
+
+#[cfg(feature = "str_deref")]
 impl<META, META2, T> Deref for FlexRc<META, META2, T>
 where
     META: Algorithm<META, META2>,
