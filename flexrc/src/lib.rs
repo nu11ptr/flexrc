@@ -10,8 +10,12 @@ use alloc::alloc::{alloc, handle_alloc_error};
 use alloc::boxed::Box;
 use alloc::str;
 use core::alloc::Layout;
+use core::borrow::Borrow;
+use core::fmt;
+use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use core::ops::Deref;
+use core::pin::Pin;
 use core::ptr::NonNull;
 use core::{mem, ptr};
 
@@ -77,33 +81,27 @@ where
     }
 
     #[inline]
+    pub fn new_uninit() -> FlexRc<META, META2, mem::MaybeUninit<T>> {
+        FlexRc::new(mem::MaybeUninit::uninit())
+    }
+
+    #[inline]
+    pub fn new_zeroed() -> FlexRc<META, META2, mem::MaybeUninit<T>> {
+        FlexRc::new(mem::MaybeUninit::zeroed())
+    }
+
+    #[inline]
+    pub fn pin(data: T) -> Pin<Self> {
+        // SAFETY: The data is stored in a heap allocation and will not move when the handle moves.
+        unsafe { Pin::new_unchecked(Self::new(data)) }
+    }
+
+    #[inline]
     pub fn from_ref(data: &T) -> Self
     where
         T: Clone,
     {
         Self::new(data.clone())
-    }
-
-    #[inline]
-    fn is_unique(&self) -> bool {
-        self.as_inner().metadata.is_unique()
-    }
-
-    #[inline]
-    pub fn get_mut(&mut self) -> Option<&mut T> {
-        if self.is_unique() {
-            // SAFETY: Since this is the unique owner, we can be assured we are only giving out one `&mut`
-            unsafe { Some(self.get_mut_unchecked()) }
-        } else {
-            None
-        }
-    }
-
-    /// # Safety
-    /// The user is trusted they are to be the sole owner before calling this (typically at init time)
-    #[inline]
-    pub unsafe fn get_mut_unchecked(&mut self) -> &mut T {
-        &mut (*self.ptr.as_ptr()).data
     }
 }
 
@@ -111,7 +109,6 @@ impl<META, META2, T> FlexRc<META, META2, [T]>
 where
     META: Algorithm<META, META2>,
     META2: Algorithm<META2, META>,
-    T: Copy,
 {
     #[inline]
     fn new_slice_uninit_inner<'a>(
@@ -151,11 +148,35 @@ where
     }
 
     #[inline]
-    pub fn new_slice_uninit(len: usize) -> FlexRc<META, META2, [mem::MaybeUninit<T>]> {
+    pub fn new_uninit_slice(len: usize) -> FlexRc<META, META2, [mem::MaybeUninit<T>]> {
         let inner = Self::new_slice_uninit_inner(len);
         FlexRc::from_inner(inner.into())
     }
 
+    #[inline]
+    pub fn new_zeroed_slice(len: usize) -> FlexRc<META, META2, [mem::MaybeUninit<T>]> {
+        let inner = Self::new_slice_uninit_inner(len);
+
+        // SAFETY: `MaybeUninit<T>` may hold any bit pattern, including all zero bytes.
+        unsafe {
+            ptr::write_bytes(inner.data.as_mut_ptr(), 0, len);
+        }
+
+        FlexRc::from_inner(inner.into())
+    }
+
+    #[inline]
+    pub fn new_slice_uninit(len: usize) -> FlexRc<META, META2, [mem::MaybeUninit<T>]> {
+        Self::new_uninit_slice(len)
+    }
+}
+
+impl<META, META2, T> FlexRc<META, META2, [T]>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+    T: Copy,
+{
     // This is not safe IF str deref feature is on because there is no guarantee that `str` bytes
     // came from well formed UTF
     #[cfg(not(feature = "str_deref"))]
@@ -179,6 +200,23 @@ where
 
         // Now that we are initialized, dump the MaybeUninit wrapper
         unsafe { Self::from_inner(inner.assume_init().into()) }
+    }
+}
+
+impl<META, META2, T> FlexRc<META, META2, mem::MaybeUninit<T>>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+{
+    /// # Safety
+    /// We are trusting the user that this memory has been initialized
+    /// (thus why it is an unsafe function)
+    #[inline]
+    pub unsafe fn assume_init(self) -> FlexRc<META, META2, T> {
+        let inner = mem::ManuallyDrop::new(self).ptr.as_ptr() as *mut FlexRcInner<META, META2, T>;
+
+        // SAFETY: `MaybeUninit<T>` and `T` have the same layout, and the caller guarantees init.
+        FlexRc::from_inner(unsafe { NonNull::new_unchecked(inner) })
     }
 }
 
@@ -235,6 +273,38 @@ where
     fn as_inner(&self) -> &FlexRcInner<META, META2, T> {
         // SAFETY: As long as we have an instance, our pointer is guaranteed valid
         unsafe { self.ptr.as_ref() }
+    }
+
+    #[inline]
+    fn is_unique(&self) -> bool {
+        self.as_inner().metadata.is_unique()
+    }
+
+    #[inline]
+    pub fn as_ptr(this: &Self) -> *const T {
+        ptr::addr_of!(this.as_inner().data)
+    }
+
+    #[inline]
+    pub fn ptr_eq(this: &Self, other: &Self) -> bool {
+        ptr::addr_eq(this.ptr.as_ptr(), other.ptr.as_ptr())
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self) -> Option<&mut T> {
+        if self.is_unique() {
+            // SAFETY: Since this is the unique owner, we can be assured we are only giving out one `&mut`
+            unsafe { Some(self.get_mut_unchecked()) }
+        } else {
+            None
+        }
+    }
+
+    /// # Safety
+    /// The user is trusted they are to be the sole owner before calling this (typically at init time)
+    #[inline]
+    pub unsafe fn get_mut_unchecked(&mut self) -> &mut T {
+        &mut (*self.ptr.as_ptr()).data
     }
 
     /// Try to convert this into a type with the other type of metadata for the pair (local -> shared,
@@ -300,6 +370,30 @@ where
     }
 }
 
+impl<META, META2, T> AsRef<T> for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+    T: ?Sized,
+{
+    #[inline(always)]
+    fn as_ref(&self) -> &T {
+        &self.as_inner().data
+    }
+}
+
+impl<META, META2, T> Borrow<T> for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+    T: ?Sized,
+{
+    #[inline(always)]
+    fn borrow(&self) -> &T {
+        &self.as_inner().data
+    }
+}
+
 #[cfg(not(feature = "str_deref"))]
 impl<META, META2, T> Deref for FlexRc<META, META2, T>
 where
@@ -355,6 +449,121 @@ where
     fn clone(&self) -> Self {
         self.as_inner().metadata.clone();
         Self::from_inner(self.ptr)
+    }
+}
+
+impl<META, META2, T> Default for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+    T: Default,
+{
+    #[inline]
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
+impl<META, META2, T> From<T> for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+{
+    #[inline]
+    fn from(value: T) -> Self {
+        Self::new(value)
+    }
+}
+
+impl<META, META2, T> fmt::Debug for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+    T: fmt::Debug + ?Sized,
+{
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.as_inner().data, f)
+    }
+}
+
+impl<META, META2, T> fmt::Display for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+    T: fmt::Display + ?Sized,
+{
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.as_inner().data, f)
+    }
+}
+
+impl<META, META2, T> fmt::Pointer for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+    T: ?Sized,
+{
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Pointer::fmt(&Self::as_ptr(self), f)
+    }
+}
+
+impl<META, META2, T> PartialEq for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+    T: PartialEq + ?Sized,
+{
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.as_inner().data.eq(&other.as_inner().data)
+    }
+}
+
+impl<META, META2, T> Eq for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+    T: Eq + ?Sized,
+{
+}
+
+impl<META, META2, T> PartialOrd for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+    T: PartialOrd + ?Sized,
+{
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        self.as_inner().data.partial_cmp(&other.as_inner().data)
+    }
+}
+
+impl<META, META2, T> Ord for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+    T: Ord + ?Sized,
+{
+    #[inline]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.as_inner().data.cmp(&other.as_inner().data)
+    }
+}
+
+impl<META, META2, T> Hash for FlexRc<META, META2, T>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+    T: Hash + ?Sized,
+{
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_inner().data.hash(state);
     }
 }
 

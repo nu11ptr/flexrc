@@ -20,11 +20,11 @@ The comparison assumes the goal is a mostly transparent swap:
 | Clone/drop/deref             | Good         | `Clone`, `Drop`, and `Deref` are implemented.                         |
 | Mutable access               | Good         | `get_mut` exists; without weak refs, uniqueness only needs to consider strong handles. |
 | Rc <-> Arc style conversion  | Extra        | Flex adds `try_into_other`, `into_other`, `try_to_other`, and `to_other`. |
-| Raw pointer APIs             | Missing      | No `into_raw`, `from_raw`, `as_ptr`, or manual strong-count APIs.      |
-| Count inspection             | Missing      | No `strong_count`; weak counts are intentionally out of scope.         |
+| Raw pointer APIs             | Partial      | `as_ptr` exists; ownership-transfer and manual-count raw APIs are still missing. |
+| Count inspection             | Deferred     | No `strong_count`; exact hybrid shared-side counts are not a simple safe read. |
 | COW/extraction APIs          | Missing      | No `try_unwrap`, `into_inner`, `make_mut`, or `unwrap_or_clone`.       |
-| Uninit/zeroed allocation     | Partial      | Flex has slice uninit support, but names and bounds differ.            |
-| Trait compatibility          | Sparse       | Many std trait impls are not present yet.                             |
+| Uninit/zeroed allocation     | Good         | Scalar and slice `new_uninit`, `new_zeroed`, and `assume_init` are present. |
+| Trait compatibility          | Partial      | Common delegating traits are present; conversion traits remain incomplete. |
 | No-weak swap readiness       | Partial      | Fine for simple `new`/`clone`/`deref` use; still missing many strong-only APIs. |
 
 ## Stable Inherent Methods
@@ -32,23 +32,22 @@ The comparison assumes the goal is a mostly transparent swap:
 | Std method                  | Std availability | Flex status | Compatibility notes |
 | ---                         | ---              | ---         | --- |
 | `new`                       | `Rc`, `Arc`      | Present     | Compatible shape: `new(T) -> Self`. |
-| `new_uninit`                | `Rc`, `Arc`      | Missing     | Std creates `Rc<MaybeUninit<T>>` / `Arc<MaybeUninit<T>>`. |
-| `new_zeroed`                | `Rc`, `Arc`      | Missing     | Stable in std; no scalar zeroed constructor in flex. |
-| `pin`                       | `Rc`, `Arc`      | Missing     | Would return `Pin<Self>`. |
-| `try_pin`                   | `Arc` only       | Missing     | Arc-only stable API. |
+| `new_uninit`                | `Rc`, `Arc`      | Present     | Creates `FlexRc<MaybeUninit<T>>`. |
+| `new_zeroed`                | `Rc`, `Arc`      | Present     | Creates zeroed `FlexRc<MaybeUninit<T>>`. |
+| `pin`                       | `Rc`, `Arc`      | Present     | Returns `Pin<Self>`. |
 | `try_unwrap`                | `Rc`, `Arc`      | Missing     | Needs unique-ownership extraction. |
 | `into_inner`                | `Rc`, `Arc`      | Missing     | Similar to `try_unwrap(...).ok()`. |
-| `new_uninit_slice`          | `Rc`, `Arc`      | Partial     | Flex has `new_slice_uninit`, but the name differs and it currently requires `T: Copy`. |
-| `new_zeroed_slice`          | `Rc`, `Arc`      | Missing     | No zeroed slice constructor. |
-| `assume_init`               | `Rc`, `Arc`      | Partial     | Flex has slice `assume_init`; std has scalar and slice forms. |
+| `new_uninit_slice`          | `Rc`, `Arc`      | Present     | Std-compatible name; `new_slice_uninit` remains as a flex alias. |
+| `new_zeroed_slice`          | `Rc`, `Arc`      | Present     | Creates zeroed `[MaybeUninit<T>]` slice storage. |
+| `assume_init`               | `Rc`, `Arc`      | Present     | Scalar and slice forms are present. |
 | `from_raw`                  | `Rc`, `Arc`      | Missing     | Unsafe raw-pointer reconstruction API. |
 | `into_raw`                  | `Rc`, `Arc`      | Missing     | Unsafe raw-pointer interop API. |
 | `increment_strong_count`    | `Rc`, `Arc`      | Missing     | Requires raw-pointer count manipulation. |
 | `decrement_strong_count`    | `Rc`, `Arc`      | Missing     | Requires raw-pointer count manipulation. |
-| `as_ptr`                    | `Rc`, `Arc`      | Missing     | Should return a stable `*const T` data pointer. |
-| `strong_count`              | `Rc`, `Arc`      | Missing     | Needs a public count query for each algorithm. |
+| `as_ptr`                    | `Rc`, `Arc`      | Present     | Returns a stable `*const T` data pointer. |
+| `strong_count`              | `Rc`, `Arc`      | Deferred    | Exact hybrid shared-side counts would require reading non-atomic local counters across threads. |
 | `get_mut`                   | `Rc`, `Arc`      | Present     | Same practical call shape for strong-only code. |
-| `ptr_eq`                    | `Rc`, `Arc`      | Missing     | Straightforward to add using allocation identity. |
+| `ptr_eq`                    | `Rc`, `Arc`      | Present     | Uses allocation identity. |
 | `make_mut`                  | `Rc`, `Arc`      | Missing     | Requires clone-on-write behavior. |
 | `unwrap_or_clone`           | `Rc`, `Arc`      | Missing     | Requires extraction when unique, clone otherwise. |
 | `downcast`                  | `Rc`, `Arc`      | Missing     | Applies to `dyn Any` allocations. Arc version requires `Any + Send + Sync`. |
@@ -72,6 +71,7 @@ no-weak-reference design.
 | `Weak::ptr_eq`                 | Weak refs are intentionally unsupported. |
 | `Weak::strong_count`           | Weak refs are intentionally unsupported. |
 | `Weak::weak_count`             | Weak refs are intentionally unsupported. |
+| `Arc::try_pin`                 | Nightly-only in std 1.96.0 behind `allocator_api`; not a stable compatibility target. |
 | Generic `CoerceUnsized` support | Custom smart-pointer unsizing is not implementable on stable Rust today; concrete conversions can still be added where useful. |
 
 ## Same Or Similar Names With Differences
@@ -79,9 +79,7 @@ no-weak-reference design.
 | Name                  | Std behavior | Flex behavior | Compatibility concern |
 | ---                   | ---          | ---           | --- |
 | `get_mut`             | Associated function: `Rc::get_mut(&mut rc)` / `Arc::get_mut(&mut arc)` | Method: `rc.get_mut()`; also callable as `SmallRc::get_mut(&mut rc)` | Compatible for strong-only code; std has additional weak-ref failure cases that flex intentionally does not have. |
-| `assume_init`         | Exists for scalar and slice `MaybeUninit` allocations | Exists only for `[MaybeUninit<T>]` allocations | Code using scalar `Rc::<T>::new_uninit().assume_init()` will not compile. |
 | `get_mut_unchecked`   | Nightly-only in std 1.96.0 | Public unsafe flex method | Not a stable std-compatibility target yet; exposing it is extra API. |
-| `new_uninit_slice`    | Std name for uninitialized slice allocation | Flex equivalent is named `new_slice_uninit` | Transparent swaps need the std name as an alias. |
 | `from_slice`          | Not an inherent std method; std uses `From<&[T]> for Rc<[T]>` / `Arc<[T]>` | Flex inherent constructor for `[T]` when `str_deref` is disabled | Useful, but not source-compatible with std conversion code. |
 | `from_str_ref`        | Std uses `From<&str> for Rc<str>` / `Arc<str>` | Flex creates `FlexRc<[u8]>`; with `str_deref`, it derefs as `str` | Type shape differs from `Rc<str>` / `Arc<str>`. |
 | `from_ref`            | Std stable API does not have this inherent method | Flex clones from `&T` into a new allocation | Extra convenience method, not a std replacement method. |
@@ -97,7 +95,7 @@ no-weak-reference design.
 | `from_ref`         | Sized `T: Clone` | Creates a new allocation by cloning from `&T`. | No stable inherent std equivalent |
 | `from_slice`       | `[T]` where `T: Copy`, unless `str_deref` is enabled | Creates a slice allocation from a slice. | `From<&[T]> for Rc<[T]>` / `Arc<[T]>` |
 | `from_str_ref`     | `[u8]` | Creates bytes from string data; may deref as `str` under `str_deref`. | `From<&str> for Rc<str>` / `Arc<str>` |
-| `new_slice_uninit` | `[T]` where `T: Copy` | Creates uninitialized slice storage. | `new_uninit_slice`, without the same name or bounds |
+| `new_slice_uninit` | `[T]` | Alias for `new_uninit_slice`. | `new_uninit_slice` |
 
 ## Trait Implementations
 
@@ -107,16 +105,16 @@ no-weak-reference design.
 | `Deref`                              | Yes      | Yes       | Present     | Mostly compatible; `str_deref` changes `[u8]` deref behavior. |
 | `Drop`                               | Yes      | Yes       | Present     | Compatible ownership behavior. |
 | `Send` / `Sync`                      | `Rc`: no | `Arc`: conditional | Present for shared types | `SmallArc`, `HybridArc`, and `ThreadArc` are `Send + Sync` when `T: Send + Sync`; local types are not. |
-| `AsRef<T>`                           | Yes      | Yes       | Missing     | Common ergonomic gap. |
-| `Borrow<T>`                          | Yes      | Yes       | Missing     | Affects map/set lookup ergonomics. |
-| `Debug`                              | Yes      | Yes       | Missing     | Common diagnostics gap. |
-| `Display`                            | Yes      | Yes       | Missing     | Common formatting gap. |
-| `Default`                            | Yes      | Yes       | Missing     | Std supports `T: Default`, `[T]`, `str`, and `CStr` variants. |
-| `Hash`                               | Yes      | Yes       | Missing     | Needed for hash maps/sets by value. |
-| `PartialEq` / `Eq`                   | Yes      | Yes       | Missing     | Needed for ordinary comparisons. |
-| `PartialOrd` / `Ord`                 | Yes      | Yes       | Missing     | Needed for ordering comparisons. |
-| `Pointer` formatting                 | Yes      | Yes       | Missing     | Affects `format!("{:p}", rc)`. |
-| `From<T>`                            | Yes      | Yes       | Missing     | Std supports `Rc::from(value)` / `Arc::from(value)`. |
+| `AsRef<T>`                           | Yes      | Yes       | Present     | Delegates to the contained value. |
+| `Borrow<T>`                          | Yes      | Yes       | Present     | Delegates to the contained value. |
+| `Debug`                              | Yes      | Yes       | Present     | Delegates to the contained value. |
+| `Display`                            | Yes      | Yes       | Present     | Delegates to the contained value. |
+| `Default`                            | Yes      | Yes       | Partial     | Present for `T: Default`; std also has dedicated `[T]`, `str`, and `CStr` defaults. |
+| `Hash`                               | Yes      | Yes       | Present     | Delegates to the contained value. |
+| `PartialEq` / `Eq`                   | Yes      | Yes       | Present     | Delegates to the contained value for the same flex handle type; std has broader cross-type comparison impls. |
+| `PartialOrd` / `Ord`                 | Yes      | Yes       | Present     | Delegates to the contained value for the same flex handle type; std has broader cross-type partial-order impls. |
+| `Pointer` formatting                 | Yes      | Yes       | Present     | Formats the data pointer. |
+| `From<T>`                            | Yes      | Yes       | Present     | Equivalent to `new(value)`. |
 | `From<Box<T>>`                       | Yes      | Yes       | Missing     | Useful allocation conversion. |
 | `From<&[T]>` / `From<&mut [T]>`       | Yes      | Yes       | Missing     | Flex has inherent `from_slice`, but not the trait conversions. |
 | `From<[T; N]>`                       | Yes      | Yes       | Missing     | Needed for array-to-slice allocation conversions. |
@@ -133,10 +131,8 @@ no-weak-reference design.
 
 | Priority | Work | Why |
 | ---      | ---  | --- |
-| 1 | Add low-risk trait impls: `Debug`, `Display`, `AsRef`, `Borrow`, comparisons, `Hash`, `Pointer`. | Removes a lot of everyday source incompatibility with little algorithmic risk. |
-| 2 | Add count and identity APIs: `as_ptr`, `ptr_eq`, `strong_count`. | Common and useful; does not require weak refs or raw ownership transfer. |
-| 3 | Add extraction/COW APIs: `try_unwrap`, `into_inner`, `unwrap_or_clone`, `make_mut`. | Important for std-like ownership workflows. |
-| 4 | Add std-named uninit APIs: `new_uninit`, `new_uninit_slice`, scalar `assume_init`, and maybe `new_zeroed`/`new_zeroed_slice`. | Makes modern std allocation patterns compile. |
-| 5 | Add conversion trait impls: `From<T>`, `From<Box<T>>`, slice/string/vector conversions, `FromIterator`. | Big source-compatibility win, especially for collection code. |
-| 6 | Add raw pointer APIs only after a safety design pass. | These APIs expose allocation layout and count invariants directly. |
-| 7 | Decide the string DST story. | Current `[u8]` plus `str_deref` design is useful but not source-identical to `Rc<str>` / `Arc<str>`. |
+| 1 | Add extraction/COW APIs: `try_unwrap`, `into_inner`, `unwrap_or_clone`, `make_mut`. | Important for std-like ownership workflows, but needs careful deallocation/move-out handling. |
+| 2 | Add conversion trait impls: `From<Box<T>>`, slice/string/vector conversions, `FromIterator`. | Big source-compatibility win, especially for collection code. |
+| 3 | Add raw pointer APIs only after a safety design pass. | These APIs expose allocation layout and count invariants directly. |
+| 4 | Decide the string DST story. | Current `[u8]` plus `str_deref` design is useful but not source-identical to `Rc<str>` / `Arc<str>`. |
+| 5 | Revisit `strong_count` only with an explicit hybrid semantics decision. | Exact counts are not a few-line method for shared hybrid handles because local counts are non-atomic. |

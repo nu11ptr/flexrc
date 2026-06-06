@@ -1,6 +1,10 @@
 use flexrc::{HybridArc, HybridMeta, HybridRc, LocalMode, Meta, SharedMode, SmallArc, SmallRc};
 #[cfg(feature = "track_threads")]
 use flexrc::{ThreadArc, ThreadHybridMeta, ThreadRc};
+use std::borrow::Borrow;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::marker::PhantomPinned;
 use std::mem;
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -17,6 +21,20 @@ struct Counters {
 struct Tracked {
     counters: Arc<Counters>,
     value: usize,
+}
+
+struct PinnedValue {
+    value: usize,
+    _pin: PhantomPinned,
+}
+
+impl PinnedValue {
+    fn new(value: usize) -> Self {
+        Self {
+            value,
+            _pin: PhantomPinned,
+        }
+    }
 }
 
 impl Tracked {
@@ -64,6 +82,85 @@ fn assert_counts(counters: &Counters, clones: usize, drops: usize) {
     assert_eq!(counters.clones.load(Ordering::SeqCst), clones);
     assert_eq!(counters.drops.load(Ordering::SeqCst), drops);
 }
+
+fn hash_value<T: Hash>(value: &T) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+macro_rules! standard_api_tests {
+    ($test_name:ident, $ty:ident) => {
+        #[test]
+        fn $test_name() {
+            let value: $ty<usize> = $ty::new(5);
+            let value_clone = value.clone();
+            let other = $ty::new(5);
+
+            assert!(ptr::addr_eq($ty::as_ptr(&value), &*value as *const usize));
+            assert!($ty::ptr_eq(&value, &value_clone));
+            assert!(!$ty::ptr_eq(&value, &other));
+            assert_eq!(format!("{:p}", value), format!("{:p}", $ty::as_ptr(&value)));
+
+            let pinned = $ty::pin(PinnedValue::new(7));
+            assert_eq!(pinned.as_ref().get_ref().value, 7);
+
+            let from_value: $ty<String> = $ty::from(String::from("flex"));
+            let as_ref: &String = AsRef::as_ref(&from_value);
+            let borrowed: &String = Borrow::borrow(&from_value);
+            assert_eq!(as_ref, "flex");
+            assert_eq!(borrowed, "flex");
+            assert_eq!(format!("{from_value}"), "flex");
+            assert_eq!(format!("{from_value:?}"), "\"flex\"");
+            assert_eq!(hash_value(&from_value), hash_value(&String::from("flex")));
+
+            let defaulted: $ty<Vec<usize>> = $ty::default();
+            assert!(defaulted.is_empty());
+
+            let low = $ty::new(1);
+            let low_again = $ty::new(1);
+            let high = $ty::new(2);
+            assert_eq!(low, low_again);
+            assert!(low < high);
+
+            let mut uninit = $ty::<u32>::new_uninit();
+            uninit.get_mut().expect("unique uninit").write(11);
+            let initialized = unsafe { uninit.assume_init() };
+            assert_eq!(*initialized, 11);
+
+            let zeroed = unsafe { $ty::<u32>::new_zeroed().assume_init() };
+            assert_eq!(*zeroed, 0);
+
+            let mut uninit_slice = $ty::<[u32]>::new_uninit_slice(2);
+            let data = $ty::<[mem::MaybeUninit<u32>]>::get_mut(&mut uninit_slice)
+                .expect("unique uninit slice");
+            data[0].write(13);
+            data[1].write(17);
+            let initialized_slice = unsafe { uninit_slice.assume_init() };
+            assert_eq!(initialized_slice.as_ref(), &[13, 17]);
+
+            let mut uninit_strings = $ty::<[String]>::new_uninit_slice(1);
+            let strings = $ty::<[mem::MaybeUninit<String>]>::get_mut(&mut uninit_strings)
+                .expect("unique uninit string slice");
+            strings[0].write(String::from("flex"));
+            let initialized_strings = unsafe { uninit_strings.assume_init() };
+            assert_eq!(initialized_strings.as_ref()[0], "flex");
+
+            let zeroed_slice = unsafe { $ty::<[u32]>::new_zeroed_slice(3).assume_init() };
+            assert_eq!(zeroed_slice.as_ref(), &[0, 0, 0]);
+        }
+    };
+}
+
+standard_api_tests!(small_rc_standard_api_surface, SmallRc);
+standard_api_tests!(small_arc_standard_api_surface, SmallArc);
+standard_api_tests!(hybrid_rc_standard_api_surface, HybridRc);
+standard_api_tests!(hybrid_arc_standard_api_surface, HybridArc);
+
+#[cfg(feature = "track_threads")]
+standard_api_tests!(thread_rc_standard_api_surface, ThreadRc);
+#[cfg(feature = "track_threads")]
+standard_api_tests!(thread_arc_standard_api_surface, ThreadArc);
 
 #[test]
 fn metadata_sizes_match_active_counter_widths() {
