@@ -9,26 +9,63 @@ env:
 
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.platform.name }}, ${{ matrix.test.name }})
+    runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
       matrix:
-        command:
-          - cargo test -p flexrc
-          - cargo test -p flexrc --no-default-features
-          - cargo test -p flexrc --no-default-features --features std
-          - cargo test -p flexrc --no-default-features --features small_counters
-          - cargo test -p flexrc --no-default-features --features str_deref
-          - cargo test -p flexrc --features small_counters
-          - cargo test -p flexrc --features track_threads
-          - cargo test -p flexrc --features str_deref
-          - cargo test -p flexrc --all-features
+        platform:
+          - name: linux-amd64
+            runner: ubuntu-24.04
+            cargo: cargo
+            target_args: ""
+          # GitHub-hosted runners do not currently include linux/arm32.
+          # Exercise the arm32 target through cross/QEMU instead.
+          - name: linux-arm32
+            runner: ubuntu-24.04
+            cargo: cross
+            target_args: --target armv7-unknown-linux-gnueabihf
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            cargo: cargo
+            target_args: ""
+          - name: macos-arm64
+            runner: macos-15
+            cargo: cargo
+            target_args: ""
+          - name: windows-amd64
+            runner: windows-2025
+            cargo: cargo
+            target_args: ""
+        test:
+          - name: default
+            args: ""
+          - name: no-default
+            args: --no-default-features
+          - name: std
+            args: --no-default-features --features std
+          - name: small-counters-no-std
+            args: --no-default-features --features small_counters
+          - name: str-deref-no-std
+            args: --no-default-features --features str_deref
+          - name: small-counters
+            args: --features small_counters
+          - name: track-threads
+            args: --features track_threads
+          - name: str-deref
+            args: --features str_deref
+          - name: all-features
+            args: --all-features
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        if: matrix.platform.cargo == 'cross'
+        with:
+          tool: cross
       - uses: Swatinem/rust-cache@v2
-      - run: ${{ matrix.command }}
+      - run: ${{ matrix.platform.cargo }} test ${{ matrix.platform.target_args }} -p flexrc ${{ matrix.test.args }}
+        shell: bash
 
   lint:
     name: Lint
