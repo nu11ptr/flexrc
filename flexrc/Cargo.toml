@@ -10,7 +10,7 @@ readme = "../README.md"
 edition = "2021"
 
 [features]
-default = ["std"]
+default = ["std", "track_threads"]
 std = []
 small_counters = []
 str_deref = []

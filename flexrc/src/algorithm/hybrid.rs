@@ -1,25 +1,19 @@
 use core::cell::Cell;
 use core::marker::PhantomData;
-#[cfg(all(not(loom), feature = "track_threads"))]
-use core::sync::atomic::AtomicUsize;
 #[cfg(not(loom))]
 use core::sync::atomic::{fence, AtomicU32, Ordering};
-#[cfg(all(loom, feature = "track_threads"))]
-use loom::sync::atomic::AtomicUsize;
 #[cfg(loom)]
 use loom::sync::atomic::{fence, AtomicU32, Ordering};
 
 use static_assertions::{assert_eq_align, assert_eq_size, assert_impl_all, assert_not_impl_any};
 
 use crate::algorithm::abort;
-#[cfg(feature = "track_threads")]
-use crate::algorithm::hybrid_threads::THREAD_ID;
 use crate::{Algorithm, FlexRc, FlexRcInner, LocalMode, SharedMode};
 
 // NOTE: It is not clear to me why, but with cfg(loom) the size jumps to 128-bits for both.
-#[cfg(all(not(loom), not(feature = "track_threads")))]
+#[cfg(not(loom))]
 assert_eq_size!(HybridMeta<LocalMode>, u64);
-#[cfg(all(not(loom), not(feature = "track_threads")))]
+#[cfg(not(loom))]
 assert_eq_size!(HybridMeta<SharedMode>, u64);
 
 assert_eq_size!(HybridMeta<LocalMode>, HybridMeta<SharedMode>);
@@ -32,26 +26,19 @@ assert_eq_align!(LocalHybridRc<usize>, SharedHybridRc<usize>);
 assert_impl_all!(SharedHybridRc<usize>: Send, Sync);
 assert_not_impl_any!(LocalHybridRc<usize>: Send, Sync);
 
-#[cfg(feature = "track_threads")]
-const THREAD_ID_LOCKED: usize = (usize::MAX >> 1) + 1;
-#[cfg(feature = "track_threads")]
-const THREAD_ID_UNLOCKED: usize = usize::MAX >> 1;
-
 // Entire counter is usable for local
-const MAX_LOCAL_COUNT: u32 = u32::MAX;
+pub(in crate::algorithm) const MAX_LOCAL_COUNT: u32 = u32::MAX;
 // Save top bit for "local present" bit and second to top for overflow
-const SHARED_COUNT_MASK: u32 = u32::MAX >> 2;
-const MAX_SHARED_COUNT: u32 = SHARED_COUNT_MASK;
-const SHARED_OVERFLOW: u32 = SHARED_COUNT_MASK + 1;
+pub(in crate::algorithm) const SHARED_COUNT_MASK: u32 = u32::MAX >> 2;
+pub(in crate::algorithm) const MAX_SHARED_COUNT: u32 = SHARED_COUNT_MASK;
+pub(in crate::algorithm) const SHARED_OVERFLOW: u32 = SHARED_COUNT_MASK + 1;
 // Top bit of shared counter signifies local present (or not)
-const LOCAL_PRESENT: u32 = (u32::MAX >> 1) + 1;
+pub(in crate::algorithm) const LOCAL_PRESENT: u32 = (u32::MAX >> 1) + 1;
 // All bits set except top
-const CLEAR_LOCAL: u32 = u32::MAX >> 1;
+pub(in crate::algorithm) const CLEAR_LOCAL: u32 = u32::MAX >> 1;
 
 #[repr(C)]
 pub struct HybridMeta<MODE> {
-    #[cfg(feature = "track_threads")]
-    thread_id: AtomicUsize,
     local_count: Cell<u32>,
     shared_count: AtomicU32,
     phantom: PhantomData<MODE>,
@@ -63,41 +50,77 @@ type LocalInner<T> = FlexRcInner<HybridMeta<LocalMode>, HybridMeta<SharedMode>, 
 type SharedInner<T> = FlexRcInner<HybridMeta<SharedMode>, HybridMeta<LocalMode>, T>;
 
 #[inline(always)]
-fn abort_on_shared_overflow(old: u32) {
+pub(in crate::algorithm) fn abort_on_shared_overflow(old: u32) {
     if old & SHARED_OVERFLOW != 0 || old & SHARED_COUNT_MASK == MAX_SHARED_COUNT {
         abort()
+    }
+}
+
+#[inline(always)]
+pub(in crate::algorithm) fn retain_shared(shared_count: &AtomicU32) {
+    let old = shared_count.fetch_add(1, Ordering::Relaxed);
+    abort_on_shared_overflow(old);
+}
+
+#[inline(always)]
+pub(in crate::algorithm) fn release_shared(shared_count: &AtomicU32) -> bool {
+    // If the value was 1 previously, that means LOCAL_PRESENT wasn't set which means this
+    // is the last remaining counter
+    if shared_count.fetch_sub(1, Ordering::Release) == 1 {
+        fence(Ordering::Acquire);
+        true
+    } else {
+        false
+    }
+}
+
+#[inline(always)]
+pub(in crate::algorithm) fn retain_local(local_count: &Cell<u32>) {
+    let old = local_count.get();
+
+    if old == MAX_LOCAL_COUNT {
+        abort()
+    }
+
+    local_count.set(old + 1);
+}
+
+#[inline(always)]
+pub(in crate::algorithm) fn release_local(
+    local_count: &Cell<u32>,
+    shared_count: &AtomicU32,
+) -> bool {
+    let old = local_count.get();
+
+    if old == 0 {
+        abort()
+    }
+
+    local_count.set(old - 1);
+
+    if old == 1 {
+        let old_shared = shared_count.fetch_and(CLEAR_LOCAL, Ordering::Release);
+
+        if old_shared == LOCAL_PRESENT {
+            fence(Ordering::Acquire);
+            true
+        } else {
+            false
+        }
+    } else {
+        false
     }
 }
 
 impl HybridMeta<LocalMode> {
     #[inline(always)]
     fn retain_shared(&self) {
-        let old = self.shared_count.fetch_add(1, Ordering::Relaxed);
-        abort_on_shared_overflow(old);
+        retain_shared(&self.shared_count);
     }
 
     #[inline(always)]
     fn release_local(&self) -> bool {
-        let old = self.local_count.get();
-
-        if old == 0 {
-            abort()
-        }
-
-        self.local_count.set(old - 1);
-
-        if old == 1 {
-            let old_shared = self.shared_count.fetch_and(CLEAR_LOCAL, Ordering::Release);
-
-            if old_shared == LOCAL_PRESENT {
-                fence(Ordering::Acquire);
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        }
+        release_local(&self.local_count, &self.shared_count)
     }
 }
 
@@ -105,8 +128,6 @@ impl Algorithm<HybridMeta<LocalMode>, HybridMeta<SharedMode>> for HybridMeta<Loc
     #[inline]
     fn create() -> Self {
         Self {
-            #[cfg(feature = "track_threads")]
-            thread_id: AtomicUsize::new(THREAD_ID.with(|t| t.0)),
             local_count: Cell::new(1),
             shared_count: AtomicU32::new(LOCAL_PRESENT),
             phantom: PhantomData,
@@ -180,31 +201,17 @@ unsafe impl<T: ?Sized + Send + Sync> Sync for SharedHybridRc<T> {}
 impl HybridMeta<SharedMode> {
     #[inline(always)]
     fn retain_shared(&self) {
-        let old = self.shared_count.fetch_add(1, Ordering::Relaxed);
-        abort_on_shared_overflow(old);
+        retain_shared(&self.shared_count);
     }
 
     #[inline(always)]
     fn release_shared(&self) -> bool {
-        // If the value was 1 previously, that means LOCAL_PRESENT wasn't set which means this
-        // is the last remaining counter
-        if self.shared_count.fetch_sub(1, Ordering::Release) == 1 {
-            fence(Ordering::Acquire);
-            true
-        } else {
-            false
-        }
+        release_shared(&self.shared_count)
     }
 
     #[inline(always)]
     fn retain_local(&self) {
-        let old = self.local_count.get();
-
-        if old == MAX_LOCAL_COUNT {
-            abort()
-        }
-
-        self.local_count.set(old + 1);
+        retain_local(&self.local_count);
     }
 }
 
@@ -212,9 +219,6 @@ impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<Sha
     #[inline]
     fn create() -> Self {
         Self {
-            #[cfg(feature = "track_threads")]
-            // No thread ID set yet
-            thread_id: AtomicUsize::new(0),
             local_count: Cell::new(0),
             shared_count: AtomicU32::new(1),
             phantom: PhantomData,
@@ -238,56 +242,6 @@ impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<Sha
         self.release_shared()
     }
 
-    #[cfg(feature = "track_threads")]
-    #[inline]
-    unsafe fn try_into_other<T: ?Sized>(
-        inner: *mut SharedInner<T>,
-    ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
-        // SAFETY: We are accessing the correct variant for this type and we know the layout.
-        let metadata = unsafe { &(*inner).metadata };
-        let thread_id = THREAD_ID.with(|thread_id| thread_id.0);
-
-        // Spinlock to ensure only one thread can access this at a time
-        let old_thread_id = loop {
-            let old_thread_id = metadata
-                .thread_id
-                .fetch_or(THREAD_ID_LOCKED, Ordering::Acquire);
-
-            // If we obtained lock than old value would have lock bit unset
-            if old_thread_id < THREAD_ID_LOCKED {
-                break old_thread_id;
-            }
-            std::hint::spin_loop();
-        };
-
-        // Try and make this thread into the local one by setting LOCAL_PRESENT bit.
-        let old_shared_count = metadata
-            .shared_count
-            .fetch_or(LOCAL_PRESENT, Ordering::AcqRel);
-
-        // If we are the local thread OR there is no local thread
-        if thread_id == old_thread_id || old_shared_count < LOCAL_PRESENT {
-            metadata.retain_local();
-            metadata.release_shared();
-
-            // Store our thread ID which also acts to release the spinlock
-            metadata.thread_id.store(thread_id, Ordering::Release);
-
-            // Safety: These are literally the same type - we invented the `SharedMode` and `LocalMode` tags
-            // to FORCE new types where there wouldn't otherwise be so this is safe to cast
-            let inner = inner as *mut LocalInner<T>;
-
-            Ok(inner)
-        } else {
-            // Release spinlock and return error
-            metadata
-                .thread_id
-                .fetch_and(THREAD_ID_UNLOCKED, Ordering::Release);
-            Err(inner)
-        }
-    }
-
-    #[cfg(not(feature = "track_threads"))]
     #[inline]
     unsafe fn try_into_other<T: ?Sized>(
         inner: *mut SharedInner<T>,
@@ -317,45 +271,6 @@ impl Algorithm<HybridMeta<SharedMode>, HybridMeta<LocalMode>> for HybridMeta<Sha
         }
     }
 
-    #[cfg(feature = "track_threads")]
-    #[inline]
-    unsafe fn try_to_other<T: ?Sized>(
-        inner: *mut SharedInner<T>,
-    ) -> Result<*mut LocalInner<T>, *mut SharedInner<T>> {
-        // SAFETY: We are accessing the correct variant for this type and we know the layout.
-        let metadata = unsafe { &(*inner).metadata };
-
-        let thread_id = THREAD_ID.with(|thread_id| thread_id.0);
-
-        let old_thread_id = loop {
-            let old_thread_id = metadata
-                .thread_id
-                .fetch_or(THREAD_ID_LOCKED, Ordering::Acquire);
-
-            if old_thread_id < THREAD_ID_LOCKED {
-                break old_thread_id;
-            }
-            std::hint::spin_loop();
-        };
-
-        let old_shared_count = metadata
-            .shared_count
-            .fetch_or(LOCAL_PRESENT, Ordering::AcqRel);
-
-        if thread_id == old_thread_id || old_shared_count < LOCAL_PRESENT {
-            metadata.retain_local();
-            metadata.thread_id.store(thread_id, Ordering::Release);
-
-            Ok(inner as *mut LocalInner<T>)
-        } else {
-            metadata
-                .thread_id
-                .fetch_and(THREAD_ID_UNLOCKED, Ordering::Release);
-            Err(inner)
-        }
-    }
-
-    #[cfg(not(feature = "track_threads"))]
     #[inline]
     unsafe fn try_to_other<T: ?Sized>(
         inner: *mut SharedInner<T>,

@@ -17,6 +17,7 @@ jobs:
         command:
           - cargo test -p flexrc
           - cargo test -p flexrc --no-default-features
+          - cargo test -p flexrc --no-default-features --features std
           - cargo test -p flexrc --no-default-features --features small_counters
           - cargo test -p flexrc --no-default-features --features str_deref
           - cargo test -p flexrc --features small_counters
@@ -50,6 +51,7 @@ jobs:
         features:
           - ""
           - "--no-default-features"
+          - "--no-default-features --features std"
           - "--no-default-features --features small_counters"
           - "--features small_counters"
           - "--features track_threads"
@@ -68,6 +70,7 @@ jobs:
       matrix:
         features:
           - ""
+          - "--no-default-features --features std"
           - "--all-features"
     steps:
       - uses: actions/checkout@v4

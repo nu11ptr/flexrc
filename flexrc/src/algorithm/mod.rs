@@ -6,6 +6,8 @@ mod regular;
 use crate::FlexRcInner;
 
 pub use hybrid::*;
+#[cfg(feature = "track_threads")]
+pub use hybrid_threads::*;
 pub use regular::*;
 
 pub struct LocalMode;
