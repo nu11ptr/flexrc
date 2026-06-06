@@ -16,7 +16,7 @@ name = "convert"
 harness = false
 
 [dependencies]
-flexrc = { path = "../flexrc", features = ["str_deref", "track_threads"] }
+flexrc = { path = "../flexrc", features = ["track_threads"] }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }

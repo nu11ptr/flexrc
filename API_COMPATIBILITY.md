@@ -80,8 +80,7 @@ no-weak-reference design.
 | ---                   | ---          | ---           | --- |
 | `get_mut`             | Associated function: `Rc::get_mut(&mut rc)` / `Arc::get_mut(&mut arc)` | Method: `rc.get_mut()`; also callable as `SmallRc::get_mut(&mut rc)` | Compatible for strong-only code; std has additional weak-ref failure cases that flex intentionally does not have. |
 | `get_mut_unchecked`   | Nightly-only in std 1.96.0 | Public unsafe flex method | Not a stable std-compatibility target yet; exposing it is extra API. |
-| `from_slice`          | Not an inherent std method; std uses `From<&[T]> for Rc<[T]>` / `Arc<[T]>` | Flex inherent constructor for `[T]` when `str_deref` is disabled | Useful, but not source-compatible with std conversion code. |
-| `from_str_ref`        | Std uses `From<&str> for Rc<str>` / `Arc<str>` | Flex creates `FlexRc<[u8]>`; with `str_deref`, it derefs as `str` | Type shape differs from `Rc<str>` / `Arc<str>`. |
+| `from_slice`          | Not an inherent std method; std uses `From<&[T]> for Rc<[T]>` / `Arc<[T]>` | Flex inherent constructor for `[T]` | Useful, but not source-compatible with std conversion code. |
 | `from_ref`            | Std stable API does not have this inherent method | Flex clones from `&T` into a new allocation | Extra convenience method, not a std replacement method. |
 
 ## Flex-Only Inherent Methods
@@ -93,8 +92,7 @@ no-weak-reference design.
 | `try_to_other`     | All flex types | Non-consuming local/shared conversion; returns `Err(&self)` if in-place conversion is not possible. | None |
 | `to_other`         | All flex types where `T: Clone` | Non-consuming conversion; clones `T` if in-place conversion is not possible. | None |
 | `from_ref`         | Sized `T: Clone` | Creates a new allocation by cloning from `&T`. | No stable inherent std equivalent |
-| `from_slice`       | `[T]` where `T: Copy`, unless `str_deref` is enabled | Creates a slice allocation from a slice. | `From<&[T]> for Rc<[T]>` / `Arc<[T]>` |
-| `from_str_ref`     | `[u8]` | Creates bytes from string data; may deref as `str` under `str_deref`. | `From<&str> for Rc<str>` / `Arc<str>` |
+| `from_slice`       | `[T]` where `T: Copy` | Creates a slice allocation from a slice. | `From<&[T]> for Rc<[T]>` / `Arc<[T]>` |
 | `new_slice_uninit` | `[T]` | Alias for `new_uninit_slice`. | `new_uninit_slice` |
 
 ## Trait Implementations
@@ -102,7 +100,7 @@ no-weak-reference design.
 | Trait / conversion family            | Std `Rc` | Std `Arc` | Flex status | Compatibility notes |
 | ---                                  | ---      | ---       | ---         | --- |
 | `Clone`                              | Yes      | Yes       | Present     | Compatible. |
-| `Deref`                              | Yes      | Yes       | Present     | Mostly compatible; `str_deref` changes `[u8]` deref behavior. |
+| `Deref`                              | Yes      | Yes       | Present     | Compatible target shape: flex derefs to `T`, including native `str`. |
 | `Drop`                               | Yes      | Yes       | Present     | Compatible ownership behavior. |
 | `Send` / `Sync`                      | `Rc`: no | `Arc`: conditional | Present for shared types | `SmallArc`, `HybridArc`, and `ThreadArc` are `Send + Sync` when `T: Send + Sync`; local types are not. |
 | `AsRef<T>`                           | Yes      | Yes       | Present     | Delegates to the contained value. |
@@ -115,11 +113,11 @@ no-weak-reference design.
 | `PartialOrd` / `Ord`                 | Yes      | Yes       | Present     | Delegates to the contained value for the same flex handle type; std has broader cross-type partial-order impls. |
 | `Pointer` formatting                 | Yes      | Yes       | Present     | Formats the data pointer. |
 | `From<T>`                            | Yes      | Yes       | Present     | Equivalent to `new(value)`. |
-| `From<Box<T>>`                       | Yes      | Yes       | Missing     | Useful allocation conversion. |
+| `From<Box<T>>`                       | Yes      | Yes       | Partial     | Present for `Box<str>`; generic boxed conversions are still missing. |
 | `From<&[T]>` / `From<&mut [T]>`       | Yes      | Yes       | Missing     | Flex has inherent `from_slice`, but not the trait conversions. |
 | `From<[T; N]>`                       | Yes      | Yes       | Missing     | Needed for array-to-slice allocation conversions. |
 | `From<Vec<T>>`                       | Yes      | Yes       | Missing     | Needed for vec-to-slice allocation conversions. |
-| `From<&str>` / `From<String>`         | Yes      | Yes       | Design decision | Std produces `Rc<str>` / `Arc<str>`; flex currently uses `[u8]` plus optional `str_deref`. |
+| `From<&str>` / `From<String>`         | Yes      | Yes       | Present     | Produces native `FlexRc<str>` handles, matching std's type shape. |
 | `FromIterator<T> for _<[T]>`          | Yes      | Yes       | Missing     | Needed for `collect::<Rc<[T]>>()` style code. |
 | `TryFrom<_<[T]>> for _<[T; N]>`       | Yes      | Yes       | Missing     | Slice-to-array allocation conversion. |
 | `Unpin`                              | Yes      | Yes       | Likely auto | Should be checked explicitly if compatibility is pursued. |
@@ -132,7 +130,6 @@ no-weak-reference design.
 | Priority | Work | Why |
 | ---      | ---  | --- |
 | 1 | Add extraction/COW APIs: `try_unwrap`, `into_inner`, `unwrap_or_clone`, `make_mut`. | Important for std-like ownership workflows, but needs careful deallocation/move-out handling. |
-| 2 | Add conversion trait impls: `From<Box<T>>`, slice/string/vector conversions, `FromIterator`. | Big source-compatibility win, especially for collection code. |
+| 2 | Add conversion trait impls: generic `From<Box<T>>`, slice/vector conversions, `FromIterator`. | Big source-compatibility win, especially for collection code. |
 | 3 | Add raw pointer APIs only after a safety design pass. | These APIs expose allocation layout and count invariants directly. |
-| 4 | Decide the string DST story. | Current `[u8]` plus `str_deref` design is useful but not source-identical to `Rc<str>` / `Arc<str>`. |
-| 5 | Revisit `strong_count` only with an explicit hybrid semantics decision. | Exact counts are not a few-line method for shared hybrid handles because local counts are non-atomic. |
+| 4 | Revisit `strong_count` only with an explicit hybrid semantics decision. | Exact counts are not a few-line method for shared hybrid handles because local counts are non-atomic. |

@@ -117,6 +117,25 @@ macro_rules! standard_api_tests {
             let defaulted: $ty<Vec<usize>> = $ty::default();
             assert!(defaulted.is_empty());
 
+            let defaulted_str: $ty<str> = $ty::default();
+            assert_eq!(&*defaulted_str, "");
+
+            let from_str: $ty<str> = $ty::from("flex");
+            let from_string: $ty<str> = $ty::from(String::from("string"));
+            let from_boxed: $ty<str> = $ty::from(String::from("boxed").into_boxed_str());
+            assert_eq!(&*from_str, "flex");
+            assert_eq!(from_string.as_ref(), "string");
+            assert_eq!(from_boxed.as_ref(), "boxed");
+            assert_eq!(format!("{from_str}"), "flex");
+            assert_eq!(format!("{from_str:?}"), "\"flex\"");
+
+            let mut mutable_str: $ty<str> = $ty::from("LOUD");
+            mutable_str
+                .get_mut()
+                .expect("unique str")
+                .make_ascii_lowercase();
+            assert_eq!(mutable_str.as_ref(), "loud");
+
             let low = $ty::new(1);
             let low_again = $ty::new(1);
             let high = $ty::new(2);
@@ -152,15 +171,49 @@ macro_rules! standard_api_tests {
     };
 }
 
+macro_rules! str_conversion_tests {
+    ($test_name:ident, $local:ident, $shared:ident) => {
+        #[test]
+        fn $test_name() {
+            let local: $local<str> = $local::from("flex");
+            assert_eq!(&*local, "flex");
+
+            let shared: $shared<str> = expect_ok(
+                local.try_into_other(),
+                "unique str should promote without copying",
+            );
+            assert_eq!(&*shared, "flex");
+
+            let local: $local<str> = expect_ok(
+                shared.try_into_other(),
+                "unique str should recover local ownership",
+            );
+            assert_eq!(local.as_ref(), "flex");
+        }
+    };
+}
+
 standard_api_tests!(small_rc_standard_api_surface, SmallRc);
 standard_api_tests!(small_arc_standard_api_surface, SmallArc);
 standard_api_tests!(hybrid_rc_standard_api_surface, HybridRc);
 standard_api_tests!(hybrid_arc_standard_api_surface, HybridArc);
+str_conversion_tests!(small_str_round_trips_through_promotion, SmallRc, SmallArc);
+str_conversion_tests!(
+    hybrid_str_round_trips_through_promotion,
+    HybridRc,
+    HybridArc
+);
 
 #[cfg(feature = "track_threads")]
 standard_api_tests!(thread_rc_standard_api_surface, ThreadRc);
 #[cfg(feature = "track_threads")]
 standard_api_tests!(thread_arc_standard_api_surface, ThreadArc);
+#[cfg(feature = "track_threads")]
+str_conversion_tests!(
+    thread_str_round_trips_through_promotion,
+    ThreadRc,
+    ThreadArc
+);
 
 #[test]
 fn metadata_sizes_match_active_counter_widths() {
@@ -543,28 +596,16 @@ fn shared_handles_clone_and_drop_across_threads() {
     }
 }
 
-#[cfg(not(feature = "str_deref"))]
 #[test]
 fn byte_slice_round_trips_through_regular_promotion() {
-    let local: SmallRc<[u8]> = SmallRc::from_slice(b"flex");
+    let mut local: SmallRc<[u8]> = SmallRc::from_slice(b"flex");
     assert_eq!(&*local, b"flex");
+    local.get_mut().expect("unique bytes")[0] = 0xFF;
+    assert_eq!(&*local, &[0xFF, b'l', b'e', b'x']);
 
     let shared: SmallArc<[u8]> = expect_ok(
         local.try_into_other(),
         "unique byte slice should promote without copying",
     );
-    assert_eq!(&*shared, b"flex");
-}
-
-#[cfg(feature = "str_deref")]
-#[test]
-fn str_deref_round_trips_through_regular_promotion() {
-    let local: SmallRc<[u8]> = SmallRc::from_str_ref("flex");
-    assert_eq!(&*local, "flex");
-
-    let shared: SmallArc<[u8]> = expect_ok(
-        local.try_into_other(),
-        "unique string bytes should promote without copying",
-    );
-    assert_eq!(&*shared, "flex");
+    assert_eq!(&*shared, &[0xFF, b'l', b'e', b'x']);
 }

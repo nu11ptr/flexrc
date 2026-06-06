@@ -31,7 +31,6 @@ Metadata size is the allocation header metadata. It does not include the pointed
 - `std` *(default)*: enables standard-library support and process abort on counter overflow.
 - `track_threads` *(default, implies `std`)*: enables `ThreadRc<T>` and `ThreadArc<T>` types.
 - `small_counters`: uses 32-bit counters for all crate types, regardless of target platform word size.
-- `str_deref`: lets `FlexRc<_, _, [u8]>` created from string data dereference as `str`.
 
 Disable default features for `no_std` plus `alloc` use:
 

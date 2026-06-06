@@ -46,14 +46,10 @@ jobs:
             args: --no-default-features --features std
           - name: small-counters-no-std
             args: --no-default-features --features small_counters
-          - name: str-deref-no-std
-            args: --no-default-features --features str_deref
           - name: small-counters
             args: --features small_counters
           - name: track-threads
             args: --features track_threads
-          - name: str-deref
-            args: --features str_deref
           - name: all-features
             args: --all-features
     steps:

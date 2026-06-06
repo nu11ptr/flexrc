@@ -8,7 +8,7 @@ pub use algorithm::*;
 
 use alloc::alloc::{alloc, handle_alloc_error};
 use alloc::boxed::Box;
-use alloc::str;
+use alloc::string::String;
 use core::alloc::Layout;
 use core::borrow::Borrow;
 use core::fmt;
@@ -139,10 +139,11 @@ where
         let inner = ptr::slice_from_raw_parts(ptr, len)
             as *mut FlexRcInner<META, META2, [mem::MaybeUninit<T>]>;
 
-        // Create our inner
-        // SAFETY: We made sure T is `Copy` and we carefully write out each field
+        // Create our inner.
+        // SAFETY: The allocation has the layout for this DST tail and `MaybeUninit<T>`
+        // permits uninitialized elements.
         unsafe {
-            ptr::write(&mut (*inner).metadata, META::create());
+            ptr::write(ptr::addr_of_mut!((*inner).metadata), META::create());
             &mut (*inner)
         }
     }
@@ -177,9 +178,6 @@ where
     META2: Algorithm<META2, META>,
     T: Copy,
 {
-    // This is not safe IF str deref feature is on because there is no guarantee that `str` bytes
-    // came from well formed UTF
-    #[cfg(not(feature = "str_deref"))]
     #[inline]
     pub fn from_slice(data: &[T]) -> Self {
         Self::from_slice_priv(data)
@@ -241,17 +239,45 @@ where
     }
 }
 
-impl<META, META2> FlexRc<META, META2, [u8]>
+impl<META, META2> FlexRc<META, META2, str>
 where
     META: Algorithm<META, META2>,
     META2: Algorithm<META2, META>,
 {
-    // There isn't an agreed upon way at a low level to go from [u8] -> str DST.
-    // While casting may very well work forever, I decided to go the ultra safe
-    // route and store as [U8] and just convert via deref to str
     #[inline]
-    pub fn from_str_ref(s: impl AsRef<str>) -> FlexRc<META, META2, [u8]> {
-        FlexRc::from_slice_priv(s.as_ref().as_bytes())
+    fn from_str_inner(data: &str) -> Self {
+        let bytes = data.as_bytes();
+        let array_layout = Layout::array::<u8>(bytes.len()).expect("valid str length");
+
+        let layout = Layout::new::<FlexRcInner<META, META2, ()>>()
+            .extend(array_layout)
+            .expect("valid inner layout")
+            .0
+            .pad_to_align();
+
+        // SAFETY: We carefully crafted our layout to correct specifications above, and
+        // we check for null below in case the allocator returns one.
+        let ptr = unsafe { alloc(layout) };
+
+        let ptr = match ptr::NonNull::new(ptr) {
+            Some(ptr) => ptr.as_ptr(),
+            None => handle_alloc_error(layout),
+        };
+
+        let inner =
+            ptr::slice_from_raw_parts_mut(ptr, bytes.len()) as *mut FlexRcInner<META, META2, str>;
+
+        // SAFETY: `data` is valid UTF-8, and we copy those bytes into the tail before any
+        // reference to the `str` is created.
+        unsafe {
+            ptr::write(ptr::addr_of_mut!((*inner).metadata), META::create());
+            ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                ptr::addr_of_mut!((*inner).data) as *mut u8,
+                bytes.len(),
+            );
+            Self::from_inner(NonNull::new_unchecked(inner))
+        }
     }
 }
 
@@ -394,7 +420,6 @@ where
     }
 }
 
-#[cfg(not(feature = "str_deref"))]
 impl<META, META2, T> Deref for FlexRc<META, META2, T>
 where
     META: Algorithm<META, META2>,
@@ -406,36 +431,6 @@ where
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.as_inner().data
-    }
-}
-
-#[cfg(feature = "str_deref")]
-impl<META, META2, T> Deref for FlexRc<META, META2, T>
-where
-    META: Algorithm<META, META2>,
-    META2: Algorithm<META2, META>,
-{
-    type Target = T;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        &self.as_inner().data
-    }
-}
-
-#[cfg(feature = "str_deref")]
-impl<META, META2> Deref for FlexRc<META, META2, [u8]>
-where
-    META: Algorithm<META, META2>,
-    META2: Algorithm<META2, META>,
-{
-    type Target = str;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        // SAFETY: When the `str_deref` feature is on to enable this method, we disable the `from_slice`
-        // method to ensure the data came from a `str`
-        unsafe { str::from_utf8_unchecked(&self.as_inner().data) }
     }
 }
 
@@ -472,6 +467,50 @@ where
     #[inline]
     fn from(value: T) -> Self {
         Self::new(value)
+    }
+}
+
+impl<META, META2> Default for FlexRc<META, META2, str>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+{
+    #[inline]
+    fn default() -> Self {
+        Self::from_str_inner("")
+    }
+}
+
+impl<META, META2> From<&str> for FlexRc<META, META2, str>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+{
+    #[inline]
+    fn from(value: &str) -> Self {
+        Self::from_str_inner(value)
+    }
+}
+
+impl<META, META2> From<String> for FlexRc<META, META2, str>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+{
+    #[inline]
+    fn from(value: String) -> Self {
+        Self::from_str_inner(&value)
+    }
+}
+
+impl<META, META2> From<Box<str>> for FlexRc<META, META2, str>
+where
+    META: Algorithm<META, META2>,
+    META2: Algorithm<META2, META>,
+{
+    #[inline]
+    fn from(value: Box<str>) -> Self {
+        Self::from_str_inner(&value)
     }
 }
 

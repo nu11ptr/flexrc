@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use flexrc::{HybridRc, SmallRc, ThreadRc, HybridArc, SmallArc, ThreadArc};
+use flexrc::{HybridArc, HybridRc, SmallArc, SmallRc, ThreadArc, ThreadRc};
 
 const ITERATIONS: usize = 10_000;
 
@@ -40,17 +40,17 @@ create!(
     "Arc<str>",
     |s: &str| <Arc<str>>::from(s),
     "SmallRc",
-    |s: &str| SmallRc::from_str_ref(s),
+    |s: &str| -> SmallRc<str> { SmallRc::from(s) },
     "SmallArc",
-    |s: &str| SmallArc::from_str_ref(s),
+    |s: &str| -> SmallArc<str> { SmallArc::from(s) },
     "HybridRc",
-    |s: &str| HybridRc::from_str_ref(s),
+    |s: &str| -> HybridRc<str> { HybridRc::from(s) },
     "HybridArc",
-    |s: &str| HybridArc::from_str_ref(s),
+    |s: &str| -> HybridArc<str> { HybridArc::from(s) },
     "ThreadRc",
-    |s: &str| ThreadRc::from_str_ref(s),
+    |s: &str| -> ThreadRc<str> { ThreadRc::from(s) },
     "ThreadArc",
-    |s: &str| ThreadArc::from_str_ref(s)
+    |s: &str| -> ThreadArc<str> { ThreadArc::from(s) }
 );
 
 criterion_group!(benches, create);

@@ -13,7 +13,6 @@ edition = "2021"
 default = ["std", "track_threads"]
 std = []
 small_counters = []
-str_deref = []
 track_threads = ["std"]
 
 [dependencies]
