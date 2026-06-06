@@ -11,8 +11,12 @@ harness = false
 name = "clone"
 harness = false
 
+[[bench]]
+name = "convert"
+harness = false
+
 [dependencies]
-flexrc = { path = "../flexrc", features = ["str_deref"] }
+flexrc = { path = "../flexrc", features = ["str_deref", "track_threads"] }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
